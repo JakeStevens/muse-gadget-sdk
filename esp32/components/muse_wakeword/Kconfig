@@ -32,6 +32,29 @@ menu "Muse wake word"
             overlay enables this yet; per-board enablement follows the
             checklist in esp32-design.md section 8.4.
 
+    choice MUSE_WAKEWORD_RUNNER
+        prompt "Wake word runner"
+        default MUSE_WAKEWORD_RUNNER_FAKE
+        depends on MUSE_WAKEWORD_ENABLE
+        help
+            What sits behind the runner interface (esp32-design.md §3.2).
+            The ExecuTorch runner joins this choice when its component
+            and model land (D1-D3). Until then every choice is a test
+            double and the boot log names it.
+
+        config MUSE_WAKEWORD_RUNNER_FAKE
+            bool "Fake (scripted in host tests, never wakes on a device)"
+
+        config MUSE_WAKEWORD_RUNNER_BENCH
+            bool "Bench triggers (serial key or loud burst, no detection)"
+            help
+                Fires a wake on the serial bench keys "wake=1" and
+                "wake.test=1", or on a loud-then-quiet energy burst (a
+                clap). For bring-up of the audio tap, wake task, and
+                turn plumbing only: it detects no speech at all. No
+                board overlay selects this.
+    endchoice
+
     choice MUSE_WAKEWORD_SENSITIVITY
         prompt "Wake word sensitivity"
         default MUSE_WAKEWORD_SENSITIVITY_DEFAULT

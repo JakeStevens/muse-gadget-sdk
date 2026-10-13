@@ -28,9 +28,12 @@ workstream's deliverables:
 - `include/ww_runner.h` - the §3.2 interface contract with the wake
   word runner / ExecuTorch backend / model. No ESP-IDF types, so the
   host tests link the same code.
-- `ww_runner_fake.c` - a scripted stand-in implementing that contract
-  for the simulator. With no script installed, as in firmware, it
+- `ww_runner_fake.c` (the default runner) - a scripted stand-in for
+  the simulator. With no script installed, as in firmware, it
   **cannot detect anything**.
+- `ww_runner_bench.c` - an on-device bring-up runner selected with
+  `MUSE_WAKEWORD_RUNNER_BENCH`. It fires on serial bench triggers or
+  a loud-then-quiet energy burst (a clap). It detects no speech.
 - `include/muse_wakeword.h` + `muse_wakeword_core.c` - the §4
   session state machine, the §4.1 integer energy fallback, and the
   caller-owned frame ring behind the §5.2 handoff and §5.3 pre-roll.

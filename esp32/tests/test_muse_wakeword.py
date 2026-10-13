@@ -233,6 +233,72 @@ class WakeWordCore(unittest.TestCase):
         self.run_energy([100] * 319 + [9000], 512)   # one loud sample is not speech energy
 
 
+class WakeWordBenchRunner(unittest.TestCase):
+    """The bench stand-in for the ET runner: a serial trigger and a
+    clap trigger. A burst is a short transient (or sustained loud
+    sound) spanning at most 8 chunks, then 2 quiet chunks to fire and
+    50 feeds of cooldown; constants pinned from ww_runner_bench.h."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        cls.binary = Path(cls.tmp.name) / 'muse_wakeword_bench_harness'
+        cc = shlex.split(os.environ.get('CC', 'cc'))
+        result = subprocess.run(
+            [*cc, '-std=gnu11', '-Wall', '-Wextra', '-Werror', *SANITIZE,
+             '-include', str(ROOT / 'tests/host_compat.h'), '-I', str(WW / 'include'),
+             str(ROOT / 'tests/muse_wakeword_bench_harness.c'),
+             str(WW / 'muse_wakeword_core.c'), str(WW / 'ww_runner_bench.c'),
+             '-o', str(cls.binary)],
+            capture_output=True, text=True)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+
+    def run_bench(self, pattern):
+        ran = subprocess.run([str(self.binary), pattern], capture_output=True, env=ENV)
+        self.assertEqual(ran.returncode, 0, ran.stderr.decode(errors='replace'))
+        self.assertEqual(ran.stderr, b'')
+        return [int(x) for x in ran.stdout.decode().split()]
+
+    def test_quiet_room_never_wakes(self):
+        self.assertEqual(self.run_bench('Q' * 20), [NONE] * 20)
+
+    def test_serial_trigger_fires_once_on_the_next_feed(self):
+        self.assertEqual(self.run_bench('TQ'), [WAKE, NONE])
+        self.assertEqual(self.run_bench('WQ'), [WAKE, SPEECH_START])
+
+    def test_energy_burst_needs_loud_then_quiet(self):
+        self.assertEqual(self.run_bench('LLLQQ'), [NONE] * 4 + [WAKE])
+        self.assertEqual(self.run_bench('LQQ'), [NONE, NONE, WAKE])
+        self.assertEqual(self.run_bench('LLLLLQ'), [NONE] * 6)     # still loud
+
+    def test_short_clap_transient_wakes_after_quiet(self):
+        # Whole-chunk RMS is only 3000: sustained-chunk thresholds missed
+        # real claps on the BOX-3, whose energy is in the first few ms.
+        self.assertEqual(self.run_bench('CQQ'), [NONE, NONE, WAKE])
+        self.assertEqual(self.run_bench('CCCQQ')[-1], WAKE)        # decay across chunks
+        self.assertEqual(self.run_bench('cQQ'), [NONE] * 3)        # peak too soft
+
+    def test_sustained_loud_sound_is_not_a_clap(self):
+        self.assertEqual(self.run_bench('L' * 8 + 'QQ')[-1], WAKE)
+        self.assertEqual(self.run_bench('L' * 9 + 'QQ')[-1], NONE)
+
+    def test_cooldown_blocks_an_immediate_second_burst(self):
+        self.assertEqual(self.run_bench('LLLQQ' + 'LLLQQ')[-1], NONE)
+        again = self.run_bench('LLLQQ' + 'Q' * 50 + 'LLLQQ')
+        self.assertEqual(again[-1], WAKE)
+
+    def test_gates_discard_bursts_and_triggers(self):
+        self.assertEqual(self.run_bench('0LLLQQ1Q'), [NONE] * 6)   # not listening
+        self.assertEqual(self.run_bench('sLLLQQuQ'), [NONE] * 6)   # suppressed
+        self.assertEqual(self.run_bench('sTuQ'), [NONE, NONE])     # trigger dropped
+
+    def test_reset_forgets_a_half_finished_burst(self):
+        self.assertEqual(self.run_bench('LLLRQQ'), [NONE] * 5)
+        self.assertEqual(self.run_bench('CRQQ'), [NONE] * 3)
+
+
 
 if __name__ == '__main__':
     unittest.main()
