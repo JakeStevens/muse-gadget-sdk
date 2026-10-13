@@ -17,6 +17,8 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -29,6 +31,11 @@
  * drives muse_state for the UI.
  */
 esp_err_t muse_voice_start(QueueHandle_t queue);
+
+/* Wake word (§7.1): the next record() starts with this audio (copied,
+ * whole 20 ms chunks, at most a second) instead of the push-to-talk
+ * pre-roll ring, so a hands-free note includes the wake word itself. */
+void muse_voice_seed_preroll(const int16_t *pcm, size_t frames);
 
 /* While on (settings' Sound page), idle mic audio feeds muse_voice_monitor_db(). */
 void muse_voice_set_monitor(bool on);

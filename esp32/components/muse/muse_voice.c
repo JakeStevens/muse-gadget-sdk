@@ -96,6 +96,11 @@ static muse_adpcm_t s_pre_enc;
 static int16_t s_chunk[MUSE_AUDIO_CHUNK];
 static int s_settle;
 
+/* Wake word pre-roll seeded for the next record() (§7.1), whole chunks. */
+#define SEED_FRAMES (MUSE_AUDIO_RATE)   /* one second, matching the glue */
+static int16_t *s_seed;
+static volatile size_t s_seed_frames;
+
 /*
  * The note being recorded (HOLD_NOTES), kept whole in case it can't go now.
  * Streaming, Hatch has had s_sent frames of it.
@@ -266,6 +271,16 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
         /* Pressed during playback: the queued tail of the reply is still sounding. */
         for (int i = 0; i < SETTLE_CHUNKS; i++) {
             muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK);
+        }
+        s_seed_frames = 0;
+    } else if (s_seed_frames) {
+        /* A hands-free turn: the seeded audio already includes the wake
+         * word, and the button ring would double-count the overlap. */
+        size_t seeded = s_seed_frames;
+        s_seed_frames = 0;
+        for (size_t off = 0; off < seeded; off += MUSE_AUDIO_CHUNK) {
+            take(&st, s_seed + off);
+            n += MUSE_AUDIO_CHUNK;
         }
     } else {
         for (size_t i = 0; i < s_pre_fill; i++) {
@@ -887,9 +902,21 @@ static void voice_task(void *arg)
     }
 }
 
+void muse_voice_seed_preroll(const int16_t *pcm, size_t frames)
+{
+    if (!s_seed || !pcm) {
+        return;
+    }
+    size_t n = frames < SEED_FRAMES ? frames : SEED_FRAMES;
+    n -= n % MUSE_AUDIO_CHUNK;   /* whole chunks only: take() works in chunks */
+    memcpy(s_seed, pcm, n * sizeof(int16_t));
+    s_seed_frames = n;   /* publish after the copy */
+}
+
 esp_err_t muse_voice_start(QueueHandle_t queue)
 {
     s_queue = queue;
+    s_seed = heap_caps_malloc(SEED_FRAMES * sizeof(int16_t), MUSE_BIG_CAPS);
     s_pre = heap_caps_malloc(PRE_CHUNKS * sizeof(pre_chunk_t), MUSE_BIG_CAPS);
     if (!s_pre || muse_audio_init(muse_settings_volume(), muse_settings_mic_gain()) != ESP_OK) {
         muse_state_set_mode(MUSE_MODE_ERROR);

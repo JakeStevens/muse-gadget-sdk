@@ -34,6 +34,7 @@ if(CONFIG_MUSE_ENABLED)
         "muse_input.c"
         "muse_menu.c"
         "muse_voice.c"
+        "muse_wakeword_glue.c"   # wake word tap/task; stubs unless MUSE_WAKEWORD_ENABLE
         "muse_adpcm.c"
         "muse_settings.c"
         "muse_settings_ui.c"

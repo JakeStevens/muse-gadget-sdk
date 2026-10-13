@@ -40,7 +40,10 @@ typedef enum {
 
 typedef struct {
     muse_ptt_t type;
-    bool wake;   /* a press that woke the screen: a tap only wakes */
+    bool wake;        /* a press that woke the screen: a tap only wakes */
+    bool synthetic;   /* posted by the wake word glue, not a finger: an
+                       * intentional hold, ended by endpointing, and a real
+                       * press during it takes over instead of retriggering */
 } muse_input_event_t;
 
 /*

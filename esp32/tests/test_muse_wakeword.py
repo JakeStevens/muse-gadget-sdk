@@ -300,5 +300,21 @@ class WakeWordBenchRunner(unittest.TestCase):
 
 
 
+
+def between(source, start, end):
+    at = source.index(start)
+    return source[at:source.index(end, at)]
+
+
+class WakeWordFirmwareContract(unittest.TestCase):
+    """The firmware wiring that only exists as source relationships.
+    Behaviour is the other classes' job."""
+
+    def test_synthetic_turns_are_tagged_and_seeded(self):
+        self.assertIn('bool synthetic;', (ROOT / 'components/muse/muse_input.h').read_text())
+        voice = (ROOT / 'components/muse/muse_voice.c').read_text()
+        self.assertIn('void muse_voice_seed_preroll(', voice)
+
+
 if __name__ == '__main__':
     unittest.main()
