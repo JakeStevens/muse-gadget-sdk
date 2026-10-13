@@ -310,6 +310,17 @@ class WakeWordFirmwareContract(unittest.TestCase):
     same option, the tap inside both read loops, and the opt-in
     defaulting off. Behaviour is the other classes' job."""
 
+    def test_commands_advertised_and_dispatched_with_the_feature(self):
+        noise = (ROOT / 'main/noise_control.cpp').read_text()
+        block = between(noise, '#if CONFIG_MUSE_WAKEWORD_ENABLE', '#endif')
+        self.assertIn('add_command(commands, "enable_wakeword"', block)
+        self.assertIn('add_command(commands, "disable_wakeword"', block)
+        app = (ROOT / 'main/app.c').read_text()
+        dispatch = between(app, 'static cJSON *on_ws_command(', 'unsupported command')
+        block = between(dispatch, '#if CONFIG_MUSE_WAKEWORD_ENABLE', '#endif')
+        self.assertIn('"enable_wakeword"', block)
+        self.assertIn('"disable_wakeword"', block)
+
     def test_tap_is_inside_both_audio_read_loops(self):
         voice = (ROOT / 'components/muse/muse_voice.c').read_text()
         idle = between(voice, 'static void idle_capture(void)', 'static bool got_event')
