@@ -36,6 +36,7 @@
 #include "muse_mem.h"
 #include "muse_settings.h"
 #include "muse_state.h"
+#include "muse_wakeword_glue.h"
 #include "muse_wifi.h"
 
 static const char *TAG = "muse_voice";
@@ -157,8 +158,9 @@ static void idle_capture(void)
     }
     if (s_settle > 0) {
         s_settle--;
-        return;
+        return;   /* Muse's own tail: not pre-roll, and not wake word input either */
     }
+    muse_wakeword_on_audio(s_chunk, MUSE_AUDIO_CHUNK);   /* §5.1 tap: copy and return */
     pre_chunk_t *c = &s_pre[s_pre_next];
 #if MUSE_LOW_MEM
     c->start = s_pre_enc;
@@ -177,6 +179,11 @@ static bool got_event(muse_ptt_t type)
     bool hit = false;
     while (xQueueReceive(s_queue, &ev, 0) == pdTRUE) {
         muse_state_poke();
+        if (!ev.synthetic) {
+            /* Wake word preemption (§7.2) needs real presses even when
+             * this drain is only looking for the other edge. */
+            muse_wakeword_note_ptt(ev.type == MUSE_PTT_DOWN);
+        }
         hit |= ev.type == type;
     }
     return hit;
@@ -297,6 +304,7 @@ static bool record(bool barge_in, size_t *held, char *why, size_t cap)
             break;
         }
         muse_state_set_level(muse_audio_level(s_chunk, MUSE_AUDIO_CHUNK));
+        muse_wakeword_on_audio(s_chunk, MUSE_AUDIO_CHUNK);   /* live endpointing feed */
         take(&st, s_chunk);
         /* Live transcript as the caption. A failure stops the streaming; the
          * kept note goes later, or without one the failure is the caption. */
@@ -361,6 +369,7 @@ static void go_idle(const char *caption);
  */
 static bool hatch_reply(bool *delivered)
 {
+    muse_wakeword_set_playback(true);   /* never trigger on Muse's own voice (§4.2) */
     muse_state_set_mode(MUSE_MODE_THINKING);
     muse_state_set_caption("SENDING VOICE NOTE");   /* until there's a transcript or reply */
     static int16_t buf[MUSE_AUDIO_CHUNK];
@@ -400,6 +409,7 @@ static bool hatch_reply(bool *delivered)
             case MUSE_HATCH_EV_ERROR:
                 ESP_LOGW(TAG, "muse: %s", text);
                 muse_state_set_level(0);
+                muse_wakeword_set_playback(false);
                 go_idle(text);
                 return false;
             default:
@@ -410,6 +420,7 @@ static bool hatch_reply(bool *delivered)
             ESP_LOGI(TAG, "reply interrupted");
             muse_hatch_turn_cancel();
             muse_state_set_level(0);
+            muse_wakeword_set_playback(false);
             return true;
         }
         size_t n = muse_hatch_turn_read(buf, MUSE_AUDIO_CHUNK, speaking || done ? 0 : 20);
@@ -435,6 +446,7 @@ static bool hatch_reply(bool *delivered)
         }
     }
     muse_state_set_level(0);
+    muse_wakeword_set_playback(false);
     ESP_LOGI(TAG, "muse reply: %.2fs of audio, %.2fs total", (double)played / MUSE_AUDIO_RATE,
              (esp_timer_get_time() - t0) / 1e6);
     if (!played) {
@@ -807,11 +819,13 @@ static void voice_task(void *arg)
     muse_audio_selftest();
     for (;;) {
         bool wake = false;
+        bool synthetic = false;   /* this press came from the wake word glue */
         if (!pending_down) {
             muse_input_event_t ev;
             bool asleep = muse_state_asleep();
             bool battery = muse_state_on_battery();
-            bool rest = asleep && battery && !s_chirp && !s_mp3test && !s_loopback;
+            /* Listening for a wake word keeps the codecs powered (§6.4). */
+            bool rest = asleep && battery && !s_chirp && !s_mp3test && !s_loopback && !muse_wakeword_listening();
 #if HOLD_NOTES
             /* A press goes first: send_held() leaves it queued and returns
              * without backing off, so retrying before it's read would spin. */
@@ -840,22 +854,28 @@ static void voice_task(void *arg)
             }
             if (s_chirp) {
                 s_chirp = false;
+                muse_wakeword_set_playback(true);
                 muse_audio_chirp(1);
+                muse_wakeword_set_playback(false);
                 pre_reset();
             }
             if (s_mp3test) {
                 s_mp3test = false;
+                muse_wakeword_set_playback(true);
                 int16_t *pcm = NULL;
                 size_t n = muse_hatch_mp3_selftest(&pcm);
                 for (size_t i = 0; i < n; i += MUSE_AUDIO_CHUNK) {
                     muse_audio_write(pcm + i, n - i < MUSE_AUDIO_CHUNK ? n - i : MUSE_AUDIO_CHUNK);
                 }
                 free(pcm);
+                muse_wakeword_set_playback(false);
                 pre_reset();
             }
             if (s_loopback) {
                 s_loopback = false;
+                muse_wakeword_set_playback(true);
                 muse_audio_loopback_test(muse_settings_volume());
+                muse_wakeword_set_playback(false);
                 pre_reset();
             }
             /* The 20 ms read paces this loop. */
@@ -864,10 +884,14 @@ static void voice_task(void *arg)
                 continue;
             }
             muse_state_poke();
+            if (!ev.synthetic) {
+                muse_wakeword_note_ptt(ev.type == MUSE_PTT_DOWN);
+            }
             if (ev.type != MUSE_PTT_DOWN) {
                 continue;
             }
             wake = ev.wake;
+            synthetic = ev.synthetic;
         }
         if (wake && !held_on_waking()) {
             continue;   /* a tap: it only woke Muse */
@@ -875,13 +899,18 @@ static void voice_task(void *arg)
         muse_wifi_power(MUSE_WIFI_FULL);
         if (!can_record()) {
             pending_down = false;
+            if (synthetic) {
+                s_seed_frames = 0;   /* never leak a seed into a button turn */
+            }
             continue;
         }
         size_t held;
         char why[96];
+        muse_wakeword_set_ptt_turn(!synthetic);   /* a real turn pauses the runner */
         bool ok = record(pending_down, &held, why, sizeof(why));
+        muse_wakeword_set_ptt_turn(false);
         pending_down = false;
-        if (held < MIN_HELD_FRAMES && !wake) {
+        if (held < MIN_HELD_FRAMES && !wake && !synthetic) {
             muse_hatch_turn_cancel();
             drop_rec();
             pre_reset();

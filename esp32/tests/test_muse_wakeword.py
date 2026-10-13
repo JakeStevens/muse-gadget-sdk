@@ -299,21 +299,48 @@ class WakeWordBenchRunner(unittest.TestCase):
         self.assertEqual(self.run_bench('CRQQ'), [NONE] * 3)
 
 
-
-
 def between(source, start, end):
     at = source.index(start)
     return source[at:source.index(end, at)]
 
 
 class WakeWordFirmwareContract(unittest.TestCase):
-    """The firmware wiring that only exists as source relationships.
-    Behaviour is the other classes' job."""
+    """The firmware wiring that only exists as source relationships:
+    commands advertised exactly where they are dispatched under the
+    same option, the tap inside both read loops, and the opt-in
+    defaulting off. Behaviour is the other classes' job."""
 
-    def test_synthetic_turns_are_tagged_and_seeded(self):
+    def test_tap_is_inside_both_audio_read_loops(self):
+        voice = (ROOT / 'components/muse/muse_voice.c').read_text()
+        idle = between(voice, 'static void idle_capture(void)', 'static bool got_event')
+        record = between(voice, 'static bool record(bool barge_in', 'static void go_idle')
+        self.assertIn('muse_wakeword_on_audio(s_chunk', idle)
+        self.assertIn('muse_wakeword_on_audio(s_chunk', record)
+
+    def test_synthetic_turns_are_tagged_seeded_and_exempt(self):
         self.assertIn('bool synthetic;', (ROOT / 'components/muse/muse_input.h').read_text())
         voice = (ROOT / 'components/muse/muse_voice.c').read_text()
         self.assertIn('void muse_voice_seed_preroll(', voice)
+        self.assertIn('held < MIN_HELD_FRAMES && !wake && !synthetic', voice)
+        self.assertIn('muse_wakeword_set_ptt_turn(!synthetic)', voice)
+
+    def test_glue_starts_with_the_voice_pipeline(self):
+        app = (ROOT / 'components/muse/muse_app.c').read_text()
+        started = app.index('muse_voice_start(q)')
+        self.assertIn('muse_wakeword_init(q)', app[started:])
+
+    def test_bench_keys_and_off_by_default(self):
+        input_c = (ROOT / 'components/muse/muse_input.c').read_text()
+        for key in ('"wake.on"', '"wake=1"', '"wake.test=1"'):
+            self.assertIn(key, input_c)
+        # The toggle must compare the whole key: an index check here once
+        # made "wake.on" turn listening off (caught on the BOX-3).
+        self.assertIn('muse_wakeword_set_enabled(!strcmp(line, "wake.on"))', input_c)
+        kconfig = (WW / 'Kconfig').read_text()
+        enable = between(kconfig, 'config MUSE_WAKEWORD_ENABLE', 'choice MUSE_WAKEWORD_RUNNER')
+        self.assertIn('default n', enable)
+        settings = (ROOT / 'components/muse/muse_settings.c').read_text()
+        self.assertIn('"ww_on"', settings)   # the persisted opt-in
 
 
 if __name__ == '__main__':
