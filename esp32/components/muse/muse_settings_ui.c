@@ -23,6 +23,7 @@
 #include "esp_app_desc.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
+#include "sdkconfig.h"
 
 #include "muse_audio.h"
 #include "muse_battery.h"
@@ -37,6 +38,7 @@
 #include "muse_text.h"
 #include "muse_ui.h"
 #include "muse_voice.h"
+#include "muse_wakeword_glue.h"
 #include "muse_wifi.h"
 
 /* Keep content in a column that stays inside a round panel (and fits a 368 px one). */
@@ -96,6 +98,9 @@ static lv_obj_t *s_ble_sw, *s_ble_status;
 
 /* Sound page. */
 static lv_obj_t *s_spk_sw, *s_vol_val, *s_vol_sl, *s_gain_val, *s_gain_sl, *s_bright_val, *s_bright_sl, *s_mic_bar, *s_mic_val;
+#if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
+static lv_obj_t *s_clap_sw;
+#endif
 
 /* Sleep page. */
 static const int SLEEP_CHOICES[] = { 0, 30, 60, 120, 300, 600 };
@@ -982,6 +987,16 @@ static void on_speaker_sw(lv_event_t *e)
     muse_settings_set_speaker_on(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 
+#if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
+/* Temporary bench aid, compiled only with the bench runner: it toggles the
+ * same persisted listening opt-in as wake.on / enable_wakeword. Remove it
+ * when the real runner replaces the bench trigger. */
+static void on_clap_sw(lv_event_t *e)
+{
+    muse_wakeword_set_enabled(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
+
 static void on_volume(lv_event_t *e)
 {
     int v = lv_slider_get_value(s_vol_sl);
@@ -1040,6 +1055,11 @@ static void build_sound_page(lv_obj_t *tile)
     lv_obj_set_style_anim_duration(s_mic_bar, 80, 0);
     note(list, "Talk at arm's length: the bar should reach green (-30 to -15 dBFS) without going orange.");
 
+#if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
+    s_clap_sw = switch_row(list, "Clap test", muse_wakeword_enabled(), on_clap_sw);
+    note(list, "Temporary bench trigger: clap loudly, then speak. This is not wake-word detection.");
+#endif
+
     s_bright_sl = slider(list, "Brightness", 10, 100, muse_settings_brightness(), &s_bright_val, on_bright);
 
     set_val(s_vol_val, "%d%%", muse_settings_volume());
@@ -1053,6 +1073,12 @@ static void tick_sound(void)
     if (on != lv_obj_has_state(s_spk_sw, LV_STATE_CHECKED)) {
         lv_obj_set_state(s_spk_sw, LV_STATE_CHECKED, on);
     }
+#if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
+    bool clap_on = muse_wakeword_enabled();   /* also toggled over serial / by Muse */
+    if (s_clap_sw && clap_on != lv_obj_has_state(s_clap_sw, LV_STATE_CHECKED)) {
+        lv_obj_set_state(s_clap_sw, LV_STATE_CHECKED, clap_on);
+    }
+#endif
     float db = muse_voice_monitor_db();
     int v = (int)(db + 70.0f);
     v = v < 0 ? 0 : (v > 60 ? 60 : v);

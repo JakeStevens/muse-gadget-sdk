@@ -189,6 +189,11 @@ static void tick(const muse_wakeword_input_t *in)
         s_seeded_frames = muse_ww_ring_snapshot(&s_pre, s_snap, PRE_FRAMES);
         muse_voice_seed_preroll(s_snap, s_seeded_frames);
         s_capture_chunks = 0;
+        /* Show the capture state here, before posting: record() sets the
+         * same state when it accepts the turn, and replaces it with the
+         * reason when it cannot (for example, Muse is not set up yet). */
+        muse_state_set_mode(MUSE_MODE_LISTENING);
+        muse_state_set_caption("LISTENING...");
         post_ptt(MUSE_PTT_DOWN);
         ESP_LOGI(TAG, "speech started, pre-roll %.2fs", (double)s_seeded_frames / MUSE_AUDIO_RATE);
     }
