@@ -160,6 +160,7 @@ set(muse_priv_requires
     # before Kconfig values exist, so these can't depend on it; only the code does.
     fatfs esp_driver_sdspi sdmmc)
 list(APPEND muse_priv_requires camera)
+list(APPEND muse_priv_requires muse_wakeword)   # empty unless MUSE_WAKEWORD_ENABLE (esp32-design.md §6.1)
 
 idf_component_register(
     SRCS ${srcs}
