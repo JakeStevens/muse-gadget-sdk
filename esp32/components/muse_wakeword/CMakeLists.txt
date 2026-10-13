@@ -22,7 +22,13 @@
 # component in Link-only builds, so default firmware is unchanged.
 set(srcs)
 if(CONFIG_MUSE_WAKEWORD_ENABLE)
-    list(APPEND srcs "muse_wakeword_core.c" "ww_runner_fake.c")
+    list(APPEND srcs "muse_wakeword_core.c")
+    # Exactly one runner implementation: both define the ww_runner_* API.
+    if(CONFIG_MUSE_WAKEWORD_RUNNER_BENCH)
+        list(APPEND srcs "ww_runner_bench.c")
+    else()
+        list(APPEND srcs "ww_runner_fake.c")
+    endif()
 endif()
 
 idf_component_register(
