@@ -381,6 +381,35 @@ class WakeWordFirmwareContract(unittest.TestCase):
         started = app.index('muse_voice_start(q)')
         self.assertIn('muse_wakeword_init(q)', app[started:])
 
+    def test_speech_start_shows_listening_before_posting(self):
+        glue = (ROOT / 'components/muse/muse_wakeword_glue.c').read_text()
+        post = between(glue, 'MUSE_WW_ACTION_POST_PTT_DOWN', 'MUSE_WW_ACTION_POST_PTT_UP')
+        listening = post.index('muse_state_set_mode(MUSE_MODE_LISTENING)')
+        caption = post.index('muse_state_set_caption("LISTENING...")')
+        posted = post.index('post_ptt(MUSE_PTT_DOWN)')
+        self.assertLess(listening, posted)
+        self.assertLess(caption, posted)
+
+    def test_sound_page_has_bench_only_clap_test_toggle(self):
+        ui = (ROOT / 'components/muse/muse_settings_ui.c').read_text()
+        sound = between(ui, 'static void build_sound_page(', 'static void tick_sound(void)')
+        self.assertIn('#if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH', sound)
+        self.assertIn('switch_row(list, "Clap test", muse_wakeword_enabled(), on_wake_sw)', sound)
+        self.assertIn('not wake-word detection', sound)
+        callback = between(ui, 'static void on_wake_sw(', 'static void build_sound_page(')
+        self.assertIn('muse_wakeword_set_enabled(', callback)
+
+    def test_sound_page_has_wake_word_toggle_for_the_real_runner(self):
+        # The production runner gets a real settings toggle on the same
+        # persisted opt-in as wake.on/enable_wakeword; only the bench
+        # runner may call its row a clap test.
+        ui = (ROOT / 'components/muse/muse_settings_ui.c').read_text()
+        sound = between(ui, 'static void build_sound_page(', 'static void tick_sound(void)')
+        self.assertIn('switch_row(list, "Wake word", muse_wakeword_enabled(), on_wake_sw)', sound)
+        self.assertIn('Listens for \\"Hey Muse\\"', sound)
+        tick = between(ui, 'static void tick_sound(void)', '/* ---------- Sleep')
+        self.assertIn('muse_wakeword_enabled()', tick)   # switch tracks serial/Muse toggles
+
     def test_bench_keys_and_off_by_default(self):
         input_c = (ROOT / 'components/muse/muse_input.c').read_text()
         for key in ('"wake.on"', '"wake=1"', '"wake.test=1"'):
