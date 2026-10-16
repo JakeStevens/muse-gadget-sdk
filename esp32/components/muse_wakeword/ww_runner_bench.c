@@ -22,7 +22,7 @@
 
 /*
  * The §3.2 contract with test triggers behind it instead of a model.
- * Link this *or* ww_runner_fake.c, never both: the component's
+ * Link this *or* ww_runner_et.cpp, never both: the component's
  * CMakeLists picks by CONFIG_MUSE_WAKEWORD_RUNNER_*. A build that
  * logs "runner=bench" has no wake word detection whatsoever; see
  * ww_runner_bench.h for what can make it fire.

@@ -25,14 +25,14 @@ extern "C" {
 #endif
 
 /*
- * Scripting for the fake runner (ww_runner_fake.c): each feed() call
- * returns the next scripted event, then WW_EVENT_NONE forever. Audio
- * content is ignored. The listening gate is honoured (not listening
- * always yields NONE); the suppressed flag is recorded but events are
- * deliberately still returned, so SDK-side playback suppression
- * (esp32-design.md §4.2) is what simulator tests exercise. reset()
- * rewinds the script. With no script installed the fake never wakes:
- * that is the firmware behaviour until the real runner (D2) lands.
+ * Scripting for the host-test fake runner (tests/ww_runner_fake.c):
+ * each feed() call returns the next scripted event, then
+ * WW_EVENT_NONE forever. Audio content is ignored. The listening gate
+ * is honoured (not listening always yields NONE); the suppressed flag
+ * is recorded but events are deliberately still returned, so SDK-side
+ * playback suppression (esp32-design.md §4.2) is what simulator tests
+ * exercise. reset() rewinds the script. This file is test collateral
+ * only and is never selected into firmware.
  */
 void ww_runner_fake_set_script(ww_runner_t *r, const ww_event_t *events, size_t count);
 

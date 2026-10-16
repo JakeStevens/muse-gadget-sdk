@@ -12,26 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Muse wake word (esp32-design.md §6.1): the SDK-owned session core, audio
-# rings, and energy endpointing. The ExecuTorch runner (D1/D2) and "Marvin"
-# model (D3) plug in behind include/ww_runner.h when they land: EMBED_FILES
-# for models/*.pte and a PRIV_REQUIRES on the executorch component arrive
-# then, together, in one vendoring change (§9.2). Until then
-# ww_runner_fake.c provides the contract and cannot detect anything.
-# With MUSE_WAKEWORD_ENABLE=n this registers empty, like the muse
-# component in Link-only builds, so default firmware is unchanged.
+# Muse wake word: the SDK-owned session core, audio rings, LFBE frontend,
+# detector, and ExecuTorch runner. models/hey_muse.pte is embedded here;
+# its export lives in tools/export_hey_muse.py. With
+# MUSE_WAKEWORD_ENABLE=n this registers empty, like the muse component in
+# Link-only builds, so default firmware is unchanged.
 set(srcs)
+# Requirements are collected by ESP-IDF in an early-expansion pass before
+# Kconfig values exist, so executorch must be declared unconditionally.
+# This does not compile the runtime in by itself: the executorch
+# component still registers empty unless ET_ENABLE is selected.
+set(priv_requires executorch esp_timer)
+set(embed_files)
 if(CONFIG_MUSE_WAKEWORD_ENABLE)
     list(APPEND srcs "muse_wakeword_core.c")
-    # Exactly one runner implementation: both define the ww_runner_* API.
+    # Exactly one runner implementation: each defines the ww_runner_* API.
     if(CONFIG_MUSE_WAKEWORD_RUNNER_BENCH)
         list(APPEND srcs "ww_runner_bench.c")
     else()
-        list(APPEND srcs "ww_runner_fake.c")
+        list(APPEND srcs "ww_detector.c" "ww_frontend.c" "ww_runner_et.cpp")
+        list(APPEND embed_files "models/hey_muse.pte")
     endif()
 endif()
 
 idf_component_register(
     SRCS ${srcs}
     INCLUDE_DIRS "include"
+    PRIV_REQUIRES ${priv_requires}
+    EMBED_FILES ${embed_files}
 )

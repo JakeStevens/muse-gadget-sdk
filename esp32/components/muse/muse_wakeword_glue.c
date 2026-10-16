@@ -44,7 +44,12 @@ static const char *TAG = "muse_wake";
 
 #define TAP_CHUNKS 25                                  /* §5.2: 500 ms of scheduling slack */
 #define PRE_FRAMES (MUSE_AUDIO_RATE)                   /* §5.3: 1 s of upload pre-roll */
-#define WAKE_TASK_STACK 4096                           /* fake/bench runners are tiny; D4 resizes */
+#if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
+#define WAKE_TASK_STACK 4096
+#else
+#define WAKE_TASK_STACK 8192   /* ET feed+execute peak measured 2.8 KiB of 16 KiB
+                                * on BOX-3 (ww_et timing log, stack free 13580 B) */
+#endif
 #define WAKE_TASK_PRIO 5                               /* below muse_voice (6), §10.2 */
 
 static QueueHandle_t s_queue;
@@ -66,7 +71,7 @@ const char *muse_wakeword_runner_kind(void)
 #if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
     return "bench";
 #else
-    return "fake";
+    return "executorch";
 #endif
 }
 
@@ -183,12 +188,17 @@ static void tick(const muse_wakeword_input_t *in)
     if (before == MUSE_WW_IDLE && now == MUSE_WW_ARMED) {
         ESP_LOGI(TAG, "wake heard (runner=%s), listening for speech", muse_wakeword_runner_kind());
         muse_state_poke();
-        muse_state_set_caption("MARVIN HEARD - SPEAK NOW");
+        muse_state_set_caption("HEY MUSE HEARD - SPEAK NOW");
     }
     if (act & MUSE_WW_ACTION_POST_PTT_DOWN) {
         s_seeded_frames = muse_ww_ring_snapshot(&s_pre, s_snap, PRE_FRAMES);
         muse_voice_seed_preroll(s_snap, s_seeded_frames);
         s_capture_chunks = 0;
+        /* Show the capture state here, before posting: record() sets the
+         * same state when it accepts the turn, and replaces it with the
+         * reason when it cannot (for example, Muse is not set up yet). */
+        muse_state_set_mode(MUSE_MODE_LISTENING);
+        muse_state_set_caption("LISTENING...");
         post_ptt(MUSE_PTT_DOWN);
         ESP_LOGI(TAG, "speech started, pre-roll %.2fs", (double)s_seeded_frames / MUSE_AUDIO_RATE);
     }

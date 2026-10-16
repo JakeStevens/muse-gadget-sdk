@@ -27,13 +27,13 @@ extern "C" {
 #endif
 
 /*
- * Wake word ("Marvin") session orchestration, SDK-owned side of
- * esp32-design.md. This header is the M0 core: the §4 session state
- * machine, the §5.2/§5.3 audio rings, and the §4.1 energy fallback,
- * all pure C with no ESP-IDF types so tests/test_muse_wakeword.py can
- * drive them on the host. The firmware glue (tap in muse_voice.c,
- * wake word task, NVS, gadget commands) lands with M1 once the runner
- * deliverables (§3.1 D1-D3) exist; see this component's README.md.
+ * Wake word ("Hey Muse") session orchestration, SDK-owned side of
+ * esp32-design.md. This header is the host-testable core: the §4
+ * session state machine, the §5.2/§5.3 audio rings, and the §4.1
+ * energy fallback, all pure C with no ESP-IDF types so
+ * tests/test_muse_wakeword.py can drive them on the host. The
+ * firmware glue (tap in muse_voice.c, wake word task, NVS, gadget
+ * commands) lives in components/muse; see this component's README.md.
  *
  * The core is ticked once per audio chunk (320 frames / 20 ms at
  * 16 kHz). All timers are chunk counts owned here (§4.1); the runner

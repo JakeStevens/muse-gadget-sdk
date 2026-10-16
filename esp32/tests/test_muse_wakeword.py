@@ -17,6 +17,8 @@ timers, PTT/playback interleavings, audio rings, and the energy fallback,
 driven through the scripted fake runner (§3.2) and checked against a Python
 model written from the design rules, not from the C."""
 
+import hashlib
+import json
 import os
 import shlex
 import subprocess
@@ -118,9 +120,10 @@ class WakeWordCore(unittest.TestCase):
         cc = shlex.split(os.environ.get('CC', 'cc'))
         result = subprocess.run(
             [*cc, '-std=gnu11', '-Wall', '-Wextra', '-Werror', *SANITIZE,
-             '-include', str(ROOT / 'tests/host_compat.h'), '-I', str(WW / 'include'),
+             '-include', str(ROOT / 'tests/host_compat.h'),
+             '-I', str(WW / 'include'), '-I', str(ROOT / 'tests'),
              str(ROOT / 'tests/muse_wakeword_harness.c'),
-             str(WW / 'muse_wakeword_core.c'), str(WW / 'ww_runner_fake.c'),
+             str(WW / 'muse_wakeword_core.c'), str(ROOT / 'tests/ww_runner_fake.c'),
              '-o', str(cls.binary)],
             capture_output=True, text=True)
         if result.returncode:
@@ -309,6 +312,44 @@ class WakeWordFirmwareContract(unittest.TestCase):
     commands advertised exactly where they are dispatched under the
     same option, the tap inside both read loops, and the opt-in
     defaulting off. Behaviour is the other classes' job."""
+
+    def test_executorch_runner_is_the_default_production_runner(self):
+        kconfig = (WW / 'Kconfig').read_text()
+        cmake = (WW / 'CMakeLists.txt').read_text()
+        self.assertIn('default MUSE_WAKEWORD_RUNNER_EXECUTORCH', kconfig)
+        self.assertIn('select ET_ENABLE', kconfig)
+        self.assertIn('ww_runner_et.cpp', cmake)
+        self.assertIn('models/hey_muse.pte', cmake)
+        self.assertFalse((WW / 'ww_runner_fake.c').exists())
+        self.assertTrue((WW / 'models/hey_muse.pte').is_file())
+
+    def test_model_ops_match_the_sidecars_component_profile(self):
+        # The embedded .pte only runs on a firmware whose ExecuTorch
+        # profile registers its ops; the sidecar names that profile and
+        # the vendored component's VERSION must still agree. Catches a
+        # model re-export (e.g. fp32 <-> int8) without a component
+        # regeneration, which would otherwise fail only on device.
+        sidecar = json.loads((WW / 'models/hey_muse.json').read_text())
+        pte = WW / 'models/hey_muse.pte'
+        self.assertEqual(sidecar['pte_size'], pte.stat().st_size)
+        self.assertEqual(
+            sidecar['pte_sha256'], hashlib.sha256(pte.read_bytes()).hexdigest()
+        )
+        profiles = {}
+        current = None
+        for line in (ROOT / 'components/executorch/VERSION').read_text().splitlines():
+            if line.startswith('  ') and not line.startswith('    '):
+                current = line.strip().rstrip(':')
+                profiles[current] = {}
+            elif current and line.startswith('    '):
+                key, _, value = line.strip().partition(': ')
+                profiles[current][key] = value
+        profile = profiles[sidecar['component_profile']]
+        selected = set(profile['selected_ops'].split(','))
+        self.assertLessEqual(set(sidecar['model_ops']), selected)
+        self.assertEqual(
+            sidecar['component_op_set_sha256'], profile['op_set_sha256']
+        )
 
     def test_commands_advertised_and_dispatched_with_the_feature(self):
         noise = (ROOT / 'main/noise_control.cpp').read_text()

@@ -20,11 +20,10 @@
 #include <stdlib.h>
 
 /*
- * The §3.2 contract without a model behind it: scripted events for the
- * simulator, silence on a real device. It stands in for the other
- * workstream's runner (D2) so the SDK-side integration can be built
- * and tested before D1-D3 exist. It must never be mistaken for
- * detection: with no script installed it cannot wake.
+ * Host-test double for the ww_runner contract: scripted events for the
+ * simulator and unit tests. Production firmware links either the
+ * ExecuTorch runner or the bench runner instead. With no script
+ * installed this test double cannot wake.
  */
 struct ww_runner {
     ww_config_t cfg;
