@@ -354,5 +354,131 @@ class WakeWordFirmwareContract(unittest.TestCase):
         self.assertIn('"ww_on"', settings)   # the persisted opt-in
 
 
+class WakeWordFrontendDetector(unittest.TestCase):
+    """The SDK-owned LFBE frontend and posterior detector used by the
+    ExecuTorch runner. Inference itself is covered on device; these pin
+    framing, the frozen 512/480/320 geometry, silence values, and the
+    detector warm-up/smoothing/cooldown state machine on the host."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
+        cls.binary = Path(cls.tmp.name) / 'ww_frontend_harness'
+        harness = Path(cls.tmp.name) / 'harness.c'
+        harness.write_text(r'''
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+#include "ww_detector.h"
+#include "ww_frontend.h"
+
+static float g_frames[16][WW_FRONTEND_N_MELS];
+static size_t g_count;
+static void on_frame(void *ctx, const float frame[WW_FRONTEND_N_MELS]) {
+    (void)ctx;
+    if (g_count < 16) memcpy(g_frames[g_count], frame, sizeof(g_frames[0]));
+    g_count++;
+}
+
+int main(int argc, char **argv) {
+    ww_frontend_t *fe = ww_frontend_create();
+    if (!fe) return 2;
+    const char *mode = argc > 1 ? argv[1] : "";
+    if (!strcmp(mode, "silence")) {
+        int16_t zeros[512] = {0};
+        size_t n = ww_frontend_push(fe, zeros, 512, on_frame, NULL);
+        float worst = 0;
+        for (int m = 0; m < WW_FRONTEND_N_MELS; m++) {
+            float want = (logf(WW_FRONTEND_LOG_EPS) - kWwFrontendNormMean[m]) /
+                kWwFrontendNormStd[m];
+            float d = fabsf(g_frames[0][m] - want);
+            if (d > worst) worst = d;
+        }
+        printf("frames %zu worst %.9g\n", n, worst);
+        return n == 1 && g_count == 1 && worst < 1e-5f ? 0 : 1;
+    }
+    if (!strcmp(mode, "sine") || !strcmp(mode, "split")) {
+        enum { N = 3219 };
+        static int16_t pcm[N];
+        for (int i = 0; i < N; i++)
+            pcm[i] = (int16_t)(12000.0f * sinf(2.0f * 3.1415926535f * 1000.0f * (float)i / 16000.0f));
+        g_count = 0;
+        ww_frontend_push(fe, pcm, N, on_frame, NULL);
+        if (!strcmp(mode, "sine")) {
+            int best = 0;
+            for (int m = 1; m < WW_FRONTEND_N_MELS; m++)
+                if (g_frames[0][m] > g_frames[0][best]) best = m;
+            printf("frames %zu argmax %d peak %.9g\n", g_count, best, g_frames[0][best]);
+            return g_count == 9 ? 0 : 1;
+        }
+        static float whole[16][WW_FRONTEND_N_MELS];
+        size_t whole_count = g_count;
+        memcpy(whole, g_frames, sizeof(whole));
+        ww_frontend_reset(fe);
+        g_count = 0;
+        const size_t chunks[] = {1, 319, 17, 511, 320, 999, 1052};
+        size_t off = 0;
+        for (size_t i = 0; i < sizeof(chunks) / sizeof(chunks[0]); i++) {
+            ww_frontend_push(fe, pcm + off, chunks[i], on_frame, NULL);
+            off += chunks[i];
+        }
+        printf("frames %zu equal %d\n", g_count,
+               g_count == whole_count && !memcmp(whole, g_frames, sizeof(whole)));
+        return off == N && g_count == whole_count &&
+            !memcmp(whole, g_frames, sizeof(whole)) ? 0 : 1;
+    }
+    if (!strcmp(mode, "detector")) {
+        ww_detector_t det;
+        ww_detector_init(&det, WW_SENSITIVITY_DEFAULT);
+        for (int i = 0; i < WW_DETECTOR_WARMUP_FRAMES; i++)
+            if (ww_detector_push(&det, 1.0f)) return 1;
+        if (!ww_detector_push(&det, 1.0f)) return 1; /* valid frame 30 */
+        for (int i = 0; i < WW_DETECTOR_COOLDOWN_FRAMES; i++)
+            if (ww_detector_push(&det, 1.0f)) return 1;
+        if (!ww_detector_push(&det, 1.0f)) return 1;
+        ww_detector_reset(&det);
+        for (int i = 0; i < WW_DETECTOR_WARMUP_FRAMES; i++)
+            if (ww_detector_push(&det, 1.0f)) return 1;
+        printf("detector ok\n");
+        return 0;
+    }
+    return 2;
+}
+''')
+        cc = shlex.split(os.environ.get('CC', 'cc'))
+        result = subprocess.run(
+            [*cc, '-std=gnu11', '-Wall', '-Wextra', '-Werror', *SANITIZE,
+             '-I', str(WW), '-I', str(WW / 'include'), str(harness),
+             str(WW / 'ww_frontend.c'), str(WW / 'ww_detector.c'), '-lm',
+             '-o', str(cls.binary)],
+            capture_output=True, text=True)
+        if result.returncode:
+            raise AssertionError(result.stdout + result.stderr)
+
+    def run_mode(self, mode):
+        ran = subprocess.run([str(self.binary), mode], capture_output=True, env=ENV)
+        self.assertEqual(ran.returncode, 0, ran.stderr.decode(errors='replace'))
+        self.assertEqual(ran.stderr, b'')
+        return ran.stdout.decode().strip()
+
+    def test_silence_frame_matches_log_eps_normalization(self):
+        out = self.run_mode('silence').split()
+        self.assertEqual(out[:2], ['frames', '1'])
+        self.assertLess(float(out[-1]), 1e-5)
+
+    def test_sine_peaks_at_the_1khz_mel(self):
+        out = self.run_mode('sine').split()
+        self.assertEqual(out[1], '9')
+        self.assertIn(int(out[3]), (12, 13))
+        self.assertGreater(float(out[5]), 2.0)
+
+    def test_arbitrary_chunking_is_bit_identical(self):
+        self.assertEqual(self.run_mode('split'), 'frames 9 equal 1')
+
+    def test_detector_warmup_fire_and_cooldown(self):
+        self.assertEqual(self.run_mode('detector'), 'detector ok')
+
+
 if __name__ == '__main__':
     unittest.main()
