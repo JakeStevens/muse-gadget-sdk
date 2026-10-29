@@ -23,10 +23,13 @@ Outputs, by default:
   ../models/hey_muse.json    provenance/config sidecar (not read on device)
   ../ww_frontend_config.h   generated frontend constants from the checkpoint
 
-The export is int8 only: Cadence-backend PTQ (int8 weights and
-activations, calibrated on the training bundle's
-calibration_frames.pt via --calibration), lowered through the Cadence
-passes to cadence:: ops for the component's "wakeword_int8" profile.
+The export is int8 only, calibrated on the training bundle's
+calibration_frames.pt via --calibration. --backend selects the
+lowering: "cadence" (default) runs Cadence-backend PTQ through the
+Cadence passes to cadence:: ops for the component's "wakeword_int8"
+profile; "espnn" runs torchao PTQ with EspNNQuantizer and lowers
+through the ESP-NN partitioner to delegate blobs plus portable
+fallback for the component's "wakeword_espnn" profile.
 (A portable-fp32 export measured ~69 ms per 20 ms frame on ESP32-S3 —
 3.5x over the real-time budget — and was removed; the eager model in
 this script is the numerical reference for the parity check.) The
@@ -284,6 +287,78 @@ def quantize_cadence_int8(model, example, args):
     return edge, info
 
 
+def quantize_espnn_int8(model, example, args):
+    """PTQ + ESP-NN lowering; returns (EdgeProgramManager, info dict)."""
+    from torchao.quantization.pt2e.quantize_pt2e import (
+        convert_pt2e,
+        prepare_pt2e,
+    )
+
+    from executorch.backends.espressif import EspNNQuantizer, to_espnn_edge
+
+    calibration, parity_streams = load_calibration_streams(
+        args.calibration, args.calibration_clips
+    )
+    print(
+        f"calibration: {len(calibration)} clips, "
+        f"parity: {len(parity_streams)} clips"
+    )
+
+    fp32_ref = stream_posteriors(model, model.reset, parity_streams)
+
+    exported = torch.export.export(model, (example,)).module()
+    prepared = prepare_pt2e(exported, EspNNQuantizer())
+    with torch.no_grad():
+        for i, frames in enumerate(calibration):
+            zero_histories(prepared)
+            for frame in frames:
+                prepared(frame)
+            if (i + 1) % 16 == 0:
+                print(f"  calibrated {i + 1}/{len(calibration)} clips")
+    converted = convert_pt2e(prepared)
+
+    int8_out = stream_posteriors(
+        converted, lambda: zero_histories(converted), parity_streams
+    )
+    wake_diff = torch.cat(
+        [(a[:, 0] - b[:, 0]) for a, b in zip(int8_out, fp32_ref)]
+    )
+    parity = {
+        "clips": len(parity_streams),
+        "frames": sum(len(s) for s in parity_streams),
+        "wake_posterior_mean_abs_diff": float(wake_diff.abs().mean()),
+        "wake_posterior_max_abs_diff": float(wake_diff.abs().max()),
+        "fp32_frames_over_0.95": int(
+            sum(int((b[:, 0] > 0.95).sum()) for b in fp32_ref)
+        ),
+        "int8_frames_over_0.95": int(
+            sum(int((a[:, 0] > 0.95).sum()) for a in int8_out)
+        ),
+    }
+    print(f"parity vs fp32: {parity}")
+
+    with torch.no_grad():
+        program = torch.export.export(converted, (example,))
+        edge, report = to_espnn_edge(program)
+    print(
+        f"espnn: {report['partitions']} partition(s), "
+        f"{report['delegated_ops']} delegated ops, "
+        f"{len(report['cpu_ops'])} cpu ops"
+    )
+    info = {
+        "quantization": "espnn-int8-ptq",
+        "component_profile": "wakeword_espnn",
+        "calibration_clips": len(calibration),
+        "parity_vs_fp32": parity,
+        "delegation": {
+            "partitions": report["partitions"],
+            "delegated_ops": report["delegated_ops"],
+            "cpu_ops": sorted(str(o) for o in report["cpu_ops"]),
+        },
+    }
+    return edge, info
+
+
 def format_float_array(name: str, values: list[float]) -> str:
     lines = [f"static const float {name}[{len(values)}] = {{"]
     for i in range(0, len(values), 4):
@@ -375,6 +450,12 @@ def main() -> None:
         default=96,
         help="Clips to calibrate on, stratified by kind (default 96)",
     )
+    parser.add_argument(
+        "--backend",
+        choices=["cadence", "espnn"],
+        default="cadence",
+        help="Lowering backend (default cadence)",
+    )
     args = parser.parse_args()
 
     if args.executorch_root is None:
@@ -433,7 +514,10 @@ def main() -> None:
     from executorch.exir.passes.init_mutable_pass import InitializedMutableBufferPass
 
     example = torch.zeros(streaming_cls.FRAME_SHAPE)
-    edge, quantize_info = quantize_cadence_int8(model, example, args)
+    if args.backend == "espnn":
+        edge, quantize_info = quantize_espnn_int8(model, example, args)
+    else:
+        edge, quantize_info = quantize_cadence_int8(model, example, args)
     with torch.no_grad():
         program = edge.to_executorch(
             config=ExecutorchBackendConfig(
@@ -540,6 +624,8 @@ def main() -> None:
         "clips": quantize_info["calibration_clips"],
     }
     sidecar["parity_vs_fp32"] = quantize_info["parity_vs_fp32"]
+    if "delegation" in quantize_info:
+        sidecar["delegation"] = quantize_info["delegation"]
     (args.output_dir / "hey_muse.json").write_text(
         json.dumps(sidecar, indent=2, sort_keys=True) + "\n"
     )

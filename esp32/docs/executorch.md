@@ -62,19 +62,25 @@ From the ExecuTorch checkout:
 ```sh
 PYTHON=<executorch-python> \
   examples/espressif/build_idf_component.sh \
-  --profiles wakeword_int8 \
+  --profiles wakeword_int8,wakeword_espnn \
   --out <muse-gadget-sdk>/esp32/components/executorch
 ```
 
 `--profiles` takes a comma-separated list; each name is a file in
 ExecuTorch's `examples/espressif/idf_profiles/<name>.ops` (one root
-op per line). The shipped profile is `wakeword_int8` (the int8 Hey
-Muse model: `cadence::` quantized ops on the Cadence backend's
-generic/portable kernels, plus the aten glue ops). A portable-fp32
+op per line). The shipped profile is `wakeword_espnn` (the int8 Hey
+Muse model, fully delegated to the ESP-NN backend's XTS3
+interpreter over esp-nn kernels, plus one aten glue op);
+`wakeword_int8` (the older Cadence-backend export: `cadence::`
+quantized ops on the Cadence backend's generic/portable kernels,
+plus aten glue) is still generated for comparison. A portable-fp32
 variant measured ~69 ms per 20 ms frame on ESP32-S3 — not real
 time — and was removed. A profile may mix `aten::` and `cadence::`
 root ops; the generator codegen's each namespace separately and
-vendors the kernel sources both need. Each profile gets its own
+vendors the kernel sources both need. A profile may also ship
+`idf_profiles/<name>.delegates` listing delegate backends (only
+`espnn` today), whose runtime sources the generator vendors and
+compiles only for that profile. Each profile gets its own
 generated kernel registration in the component, and boards pick one
 with `CONFIG_ET_OP_PROFILE_<NAME>=y` in their
 `devices/sdkconfig.<board>` file — switching profiles never needs

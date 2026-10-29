@@ -16,9 +16,10 @@ limitations under the License.
 
 # Hey Muse wake word model
 
-`hey_muse.pte` is the int8 ExecuTorch export embedded by
-`ww_runner_et.cpp` (Cadence-backend PTQ; runs on the component's
-`wakeword_int8` profile — Cadence generic/portable kernels).
+`hey_muse.pte` is the int8 ExecuTorch export embedded 16-aligned by
+the component's generated C (see `../tools/embed_pte.py`;
+ESP-NN PTQ; runs on the component's `wakeword_espnn` profile —
+fully delegated to the XTS3 interpreter over esp-nn kernels).
 `hey_muse.json` is its generated provenance sidecar (checkpoint and
 PTE hashes, frontend config, class order, model ops, the vendored
 runtime's op-set hash, and the int8 calibration/parity record). The
@@ -62,14 +63,22 @@ checkout with a matching installed Python package (see
 ```sh
 manifold getr executorch/tree/jrstevens/hey-muse /tmp/hey-muse --skip_root_dir
 <executorch-python> components/muse_wakeword/tools/export_hey_muse.py \
+  --backend espnn \
   --checkpoint /tmp/hey-muse/hey_muse_checkpoint.pt \
   --executorch-root <executorch-checkout> \
   --calibration /tmp/hey-muse/calibration_frames.pt
 ```
+
+(`--backend cadence` reproduces the older export for the
+`wakeword_int8` profile.)
 
 The export refuses a checkpoint whose frontend/class config differs
 from the frozen frontend, verifies the model's ops against
 `components/executorch/VERSION`, and rewrites the `.pte`, the JSON
 sidecar, and `ww_frontend_config.h` together. Review all three in
 one change; a new checkpoint with different normalization vectors
-is only correct with its regenerated header.
+is only correct with its regenerated header. Export against a
+component that already ships the model's profile: otherwise the op
+check falls back to the union of profiles and the sidecar records
+`component_profile: null`, which the host contract test rejects —
+regenerate the component first, then export.
