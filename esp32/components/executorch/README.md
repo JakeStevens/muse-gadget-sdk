@@ -14,7 +14,7 @@ LICENSE file in the root directory of this source tree.
 
 ```sh
 executorch/examples/espressif/build_idf_component.sh \
-  --profiles wakeword_int8 --out <this directory>
+  --profiles wakeword_int8,wakeword_espnn --out <this directory>
 ```
 
 `VERSION` in this directory records the ExecuTorch commit, the op
@@ -45,6 +45,7 @@ profile, or `CONFIG_ET_OP_PROFILE_<NAME>=y` in your sdkconfig), then:
 | Profile | Ops | Op-set SHA-256 |
 |---|---|---|
 | `wakeword_int8` | 13 root ops, 13 kernels | `9d60f1f2407d...` |
+| `wakeword_espnn` | 1 root ops, 1 kernels | `59e0ec007491...` |
 
 Only the selected profile's kernels are compiled in. Switching
 profiles is a Kconfig change and a rebuild; no regeneration.
