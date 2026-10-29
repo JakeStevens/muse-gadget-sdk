@@ -47,8 +47,10 @@ static const char *TAG = "muse_wake";
 #if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
 #define WAKE_TASK_STACK 4096
 #else
-#define WAKE_TASK_STACK 8192   /* ET feed+execute peak measured 2.8 KiB of 16 KiB
-                                * on BOX-3 (ww_et timing log, stack free 13580 B) */
+#define WAKE_TASK_STACK 12288  /* ET feed+execute peaks ~2.8 KiB, but the
+                                * deferred model reload (parse, memory-plan,
+                                * delegate init) runs here too, and it smashed
+                                * a 6 KiB task. PSRAM stack, so this is cheap. */
 #endif
 #define WAKE_TASK_PRIO 5                               /* below muse_voice (6), §10.2 */
 
@@ -63,6 +65,10 @@ static volatile bool s_enabled;
 static volatile bool s_playback;
 static volatile bool s_ptt_turn;
 static volatile bool s_pending_down, s_pending_up;   /* physical, from muse_voice */
+static volatile bool s_reset_requested;   /* a setter asked for ww_runner_reset;
+                                           * the wake task performs it (below).
+                                           * Writers only set, the task only
+                                           * clears, so no request is lost. */
 static uint32_t s_capture_chunks;                    /* wake task only, for the log */
 static size_t s_seeded_frames;
 
@@ -93,7 +99,9 @@ void muse_wakeword_set_ptt_turn(bool active)
     s_ptt_turn = active;
     if (!active) {
         muse_ww_ring_clear(&s_pre);
-        ww_runner_reset(s_runner);
+        /* The model reload runs on the wake task: this setter is
+         * called from the 6 KB voice task, which it smashed. */
+        s_reset_requested = true;
     }
 }
 
@@ -123,7 +131,9 @@ void muse_wakeword_set_playback(bool on)
     ww_runner_set_suppressed(s_runner, on);
     muse_ww_ring_clear(&s_pre);   /* Muse's own output is never pre-roll */
     if (!on) {
-        ww_runner_reset(s_runner);   /* no stale model state across turns */
+        /* No stale model state across turns; the reload itself runs
+         * on the wake task, not on this setter's caller. */
+        s_reset_requested = true;
     }
 }
 
@@ -138,7 +148,9 @@ void muse_wakeword_set_enabled(bool on)
         muse_ww_ring_clear(&s_pre);
         muse_wakeword_core_reset(&s_core);
         s_pending_down = s_pending_up = false;
-        ww_runner_reset(s_runner);
+        /* Heavy reload runs on the wake task (this may be the 3.5 KB
+         * serial task). */
+        s_reset_requested = true;
     } else {
         muse_ww_ring_clear(&s_pre);
         /* The core closes an open capture on its next ticks with
@@ -245,6 +257,12 @@ static void wake_task(void *arg)
     (void)arg;
     static int16_t chunk[MUSE_AUDIO_CHUNK];
     for (;;) {
+        /* Deferred heavy reset (see s_reset_requested): before the
+         * tap check so it runs even when the rings are dry. */
+        if (s_reset_requested) {
+            s_reset_requested = false;
+            ww_runner_reset(s_runner);
+        }
         if (muse_ww_ring_fill(&s_tap) < MUSE_AUDIO_CHUNK) {
             /* Disabled mid-capture with the tap now dry: one silent
              * tick is what closes the synthetic hold. */

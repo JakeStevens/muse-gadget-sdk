@@ -314,6 +314,25 @@ class WakeWordFirmwareContract(unittest.TestCase):
     same option, the tap inside both read loops, and the opt-in
     defaulting off. Behaviour is the other classes' job."""
 
+    def test_runner_reload_runs_on_the_wake_task_only(self):
+        # ww_runner_reset reloads the ET method (parse, memory-plan,
+        # delegate init), which needs more stack than the tasks that
+        # call the glue setters have: it smashed the 6 KB voice task
+        # at the end of every PTT turn. The setters must only ask
+        # for it; the wake task owns the runner and performs it.
+        glue = (ROOT / 'components/muse/muse_wakeword_glue.c').read_text()
+        setters = [
+            ('void muse_wakeword_set_ptt_turn', 'void muse_wakeword_on_audio'),
+            ('void muse_wakeword_set_playback', 'void muse_wakeword_set_enabled'),
+            ('void muse_wakeword_set_enabled', 'void muse_wakeword_bench_trigger'),
+        ]
+        for start, end in setters:
+            body = between(glue, start, end)
+            self.assertNotIn('ww_runner_reset', body)
+            self.assertIn('s_reset_requested', body)
+        task = between(glue, 'static void wake_task', 'esp_err_t muse_wakeword_init')
+        self.assertIn('ww_runner_reset', task)
+
     def test_executorch_runner_is_the_default_production_runner(self):
         kconfig = (WW / 'Kconfig').read_text()
         cmake = (WW / 'CMakeLists.txt').read_text()
