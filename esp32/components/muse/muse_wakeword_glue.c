@@ -44,7 +44,12 @@ static const char *TAG = "muse_wake";
 
 #define TAP_CHUNKS 25                                  /* §5.2: 500 ms of scheduling slack */
 #define PRE_FRAMES (MUSE_AUDIO_RATE)                   /* §5.3: 1 s of upload pre-roll */
-#define WAKE_TASK_STACK 4096                           /* the bench runner is tiny */
+#if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
+#define WAKE_TASK_STACK 4096
+#else
+#define WAKE_TASK_STACK 8192   /* ET feed+execute peak measured 2.8 KiB of 16 KiB
+                                * on BOX-3 (ww_et timing log, stack free 13580 B) */
+#endif
 #define WAKE_TASK_PRIO 5                               /* below muse_voice (6), §10.2 */
 
 static QueueHandle_t s_queue;
@@ -63,7 +68,11 @@ static size_t s_seeded_frames;
 
 const char *muse_wakeword_runner_kind(void)
 {
+#if CONFIG_MUSE_WAKEWORD_RUNNER_BENCH
     return "bench";
+#else
+    return "executorch";
+#endif
 }
 
 bool muse_wakeword_enabled(void)
@@ -179,7 +188,7 @@ static void tick(const muse_wakeword_input_t *in)
     if (before == MUSE_WW_IDLE && now == MUSE_WW_ARMED) {
         ESP_LOGI(TAG, "wake heard (runner=%s), listening for speech", muse_wakeword_runner_kind());
         muse_state_poke();
-        muse_state_set_caption("WAKE HEARD - SPEAK NOW");
+        muse_state_set_caption("HEY MUSE HEARD - SPEAK NOW");
     }
     if (act & MUSE_WW_ACTION_POST_PTT_DOWN) {
         s_seeded_frames = muse_ww_ring_snapshot(&s_pre, s_snap, PRE_FRAMES);

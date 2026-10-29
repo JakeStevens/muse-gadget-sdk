@@ -25,7 +25,7 @@
 #include "freertos/queue.h"
 
 /*
- * Firmware glue for hands-free wake word ("Marvin"), esp32-design.md
+ * Firmware glue for hands-free wake word ("Hey Muse"), esp32-design.md
  * §5-§7: the audio tap in muse_voice's read loop, the wake task that
  * feeds the runner (§3.2) and ticks the session core, synthetic-PTT
  * posts to the muse_input queue, and the runtime opt-in. The pure
@@ -70,7 +70,9 @@ void muse_wakeword_set_playback(bool on);
  * muse_voice's own pre_reset() after a turn. */
 void muse_wakeword_set_ptt_turn(bool active);
 
-/* "bench", or "off" (not compiled in). */
+/* "executorch", "bench", or "off" (not compiled in). This names the
+ * linked runner in logs/status so a bench build is never mistaken for
+ * real detection. */
 const char *muse_wakeword_runner_kind(void);
 
 /* Serial bench ("wake=1" / "wake.test=1"): with the bench runner,
