@@ -22,6 +22,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from collections import deque
@@ -349,6 +350,44 @@ class WakeWordFirmwareContract(unittest.TestCase):
         self.assertEqual(
             sidecar['component_op_set_sha256'], profile['op_set_sha256']
         )
+
+    def test_embedded_model_is_16_byte_aligned(self):
+        # The ESP-NN delegate needs the model's constant region
+        # 16-byte aligned; the XTS3 blob lays constants at a
+        # 16-multiple offset within the .pte, so the generated embed
+        # must guarantee a 16-aligned base. ET itself needs only 8,
+        # and an 8-but-not-16 base silently costs the whole blob in
+        # PSRAM (the runtime's "copied to RAM" fallback), as seen on
+        # the Watcher when the linker placed the array at ...b28.
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / 'tiny.pte'
+            fixture.write_bytes(bytes(range(64)))
+            ran = subprocess.run(
+                [sys.executable, str(WW / 'tools/embed_pte.py'),
+                 str(fixture), tmp, 'tiny_pte'],
+                capture_output=True, text=True)
+            self.assertEqual(ran.returncode, 0, ran.stderr)
+            gen_c = Path(tmp) / 'tiny_pte.c'
+            self.assertIn('aligned(16)', gen_c.read_text())
+            main_c = Path(tmp) / 'check_align.c'
+            main_c.write_text(
+                '#include <stdint.h>\n'
+                '#include <stdio.h>\n'
+                'extern const uint8_t tiny_pte_start[];\n'
+                'int main(void) {\n'
+                '    printf("%d\\n", (int)((uintptr_t)tiny_pte_start % 16));\n'
+                '    return 0;\n'
+                '}\n')
+            binary = Path(tmp) / 'check_align'
+            cc = shlex.split(os.environ.get('CC', 'cc'))
+            result = subprocess.run(
+                [*cc, '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+                 str(main_c), str(gen_c), '-o', str(binary)],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0,
+                             result.stdout + result.stderr)
+            ran = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(ran.stdout.strip(), '0')
 
     def test_commands_advertised_and_dispatched_with_the_feature(self):
         noise = (ROOT / 'main/noise_control.cpp').read_text()
