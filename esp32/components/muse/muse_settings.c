@@ -41,6 +41,7 @@ static struct {
     uint16_t sleep_s;
     bool wifi_on;
     bool ble_on;
+    bool wakeword_on;   /* default off: listening is an explicit opt-in */
     char ssid[MUSE_SSID_MAX + 1];
     char pass[MUSE_PASS_MAX + 1];
     char host[MUSE_HOST_MAX + 1];
@@ -136,6 +137,9 @@ esp_err_t muse_settings_init(void)
     if (nvs_get_u8(s_nvs, "ble_on", &b) == ESP_OK) {
         s.ble_on = b;
     }
+    if (nvs_get_u8(s_nvs, "ww_on", &b) == ESP_OK) {
+        s.wakeword_on = b;
+    }
     load_str("ssid", s.ssid, sizeof(s.ssid));
     load_str("pass", s.pass, sizeof(s.pass));
     load_str("host", s.host, sizeof(s.host));
@@ -164,6 +168,7 @@ int muse_settings_sleep_s(void) { return s.sleep_s; }
 bool muse_settings_wifi_on(void) { return s.wifi_on; }
 bool muse_settings_ble_on(void) { return s.ble_on; }
 bool muse_settings_voice_notes(void) { return atomic_load(&s_voice_notes); }
+bool muse_settings_wakeword_on(void) { return s.wakeword_on; }
 
 void muse_settings_set_voice_notes(bool on)
 {
@@ -256,6 +261,13 @@ void muse_settings_set_ble_on(bool on)
     s.ble_on = on;
     save_u8("ble_on", on);
     notify(MUSE_SETTING_BLE);
+}
+
+void muse_settings_set_wakeword_on(bool on)
+{
+    s.wakeword_on = on;
+    save_u8("ww_on", on);
+    notify(MUSE_SETTING_WAKEWORD);
 }
 
 void muse_settings_set_wifi(const char *ssid, const char *pass)
