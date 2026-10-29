@@ -17,6 +17,7 @@
 #include "ww_runner.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <mutex>
 #include <new>
@@ -30,10 +31,7 @@
 #include "ww_detector.h"
 #include "ww_frontend.h"
 
-extern "C" {
-extern const uint8_t _binary_hey_muse_pte_start[];
-extern const uint8_t _binary_hey_muse_pte_end[];
-}
+#include "hey_muse_pte.h"
 
 namespace
 {
@@ -168,8 +166,14 @@ ww_runner_t *ww_runner_create(const ww_config_t *cfg)
     const uint8_t *pte = effective.model;
     size_t pte_len = effective.model_len;
     if (pte == nullptr || pte_len == 0) {
-        pte = _binary_hey_muse_pte_start;
-        pte_len = (size_t)(_binary_hey_muse_pte_end - _binary_hey_muse_pte_start);
+        pte = hey_muse_pte_start;
+        pte_len = hey_muse_pte_len;
+    }
+    if ((reinterpret_cast<uintptr_t>(pte) & 7) != 0) {
+        /* Program::load needs 8-byte alignment; the generated embed has it,
+         * so this only fires for a misaligned caller-supplied model. */
+        ESP_LOGE(kTag, "model at %p is not 8-byte aligned", (const void *)pte);
+        return nullptr;
     }
 
     auto *runner = new (std::nothrow) ww_runner_t();

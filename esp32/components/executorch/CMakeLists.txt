@@ -13,18 +13,6 @@
 
 include(${CMAKE_CURRENT_LIST_DIR}/et_generated.cmake)
 
-if(NOT CONFIG_ET_ENABLE)
-  # ESP-IDF links every component under components/ into the image, and
-  # this component's WHOLE_ARCHIVE registration (below) is deliberately
-  # GC-proof. This gate is how a project that vendors the component
-  # but does not use it yet keeps its firmware unchanged (the same
-  # empty-registration pattern as muse_wakeword). Consumers that use
-  # the component leave CONFIG_ET_ENABLE at its default (y), or select
-  # it from their own Kconfig.
-  idf_component_register(INCLUDE_DIRS "include")
-  return()
-endif()
-
 # Pick the Kconfig-selected profile (default: ET_DEFAULT_PROFILE).
 set(_et_profile "${ET_DEFAULT_PROFILE}")
 foreach(_p IN LISTS ET_PROFILES)
@@ -35,10 +23,23 @@ foreach(_p IN LISTS ET_PROFILES)
 endforeach()
 string(TOUPPER "${_et_profile}" _ET_UP)
 
-set(_et_srcs
-    ${ET_CORE_SRCS} ${ET_PROFILE_SRCS_${_ET_UP}}
-    ${ET_KERNEL_SRCS_${_ET_UP}} "src/et_model.cpp" "src/platform/esp_pal.cpp"
-)
+# ESP-IDF collects requirements in an early-expansion pass before Kconfig
+# values exist, so the PRIV_REQUIRES list below must be unconditional: a
+# gated early-return register() would leave this component with no
+# recorded requirements and its sources uncompilable. The gate for a
+# project that vendors the component but does not use it yet is the
+# source list instead: with CONFIG_ET_ENABLE=n this registers an empty
+# INTERFACE library, leaving firmware unchanged (same empty-registration
+# shape as muse_wakeword). Consumers that use the component leave
+# CONFIG_ET_ENABLE at its default (y), or select it from their Kconfig.
+set(_et_srcs "")
+if(CONFIG_ET_ENABLE)
+  set(_et_srcs
+      ${ET_CORE_SRCS} ${ET_PROFILE_SRCS_${_ET_UP}}
+      ${ET_KERNEL_SRCS_${_ET_UP}} ${ET_ESPNN_SRCS_${_ET_UP}}
+      "src/et_model.cpp" "src/platform/esp_pal.cpp"
+  )
+endif()
 
 # WHOLE_ARCHIVE: kernel registration happens in static initializers in
 # the profile's register_kernels.cpp; normal archive extraction would
@@ -48,7 +49,7 @@ set(_et_srcs
 idf_component_register(
   SRCS ${_et_srcs}
   INCLUDE_DIRS "include"
-  PRIV_REQUIRES esp_hw_support esp_system log heap
+  PRIV_REQUIRES esp_hw_support esp_system log heap espressif__esp-nn esp_timer
   WHOLE_ARCHIVE
 )
 

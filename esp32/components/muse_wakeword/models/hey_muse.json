@@ -1,5 +1,5 @@
 {
-  "architecture_executorch_commit": "de7cbaad41da6a8ff378de119e419e597b29ed98",
+  "architecture_executorch_commit": "0555620476addd00d09ce530942d4db0ee1b6e71",
   "architecture_executorch_version": "1.6.0",
   "calibration": {
     "clips": 95,
@@ -13,9 +13,14 @@
     "silence",
     "other"
   ],
-  "component_op_set_sha256": "9d60f1f2407d4d0fb964b5af147b47e546291e59a7cc2a8c51e52efe7d97fa84",
-  "component_profile": "wakeword_int8",
-  "exporter_git_version": "a134f8f1caacdb1dc025e5c51cfcd6ae7ccc9fca",
+  "component_op_set_sha256": "59e0ec007491f900cf9ee19ee30cae30526479afb607ff99f6786e9ac738ccc0",
+  "component_profile": "wakeword_espnn",
+  "delegation": {
+    "cpu_ops": [],
+    "delegated_ops": 27,
+    "partitions": 1
+  },
+  "exporter_git_version": "0555620476addd00d09ce530942d4db0ee1b6e71",
   "frontend": {
     "clip_frames": 100,
     "fmax": 8000.0,
@@ -30,31 +35,20 @@
   },
   "model": "StreamingWakeWord",
   "model_ops": [
-    "aten::_softmax.out",
-    "aten::cat.out",
-    "aten::copy_",
-    "aten::permute_copy.out",
-    "aten::slice_copy.Tensor_out",
-    "aten::squeeze_copy.dim_out",
-    "aten::transpose_copy.int_out",
-    "cadence::dequantize_per_tensor.out",
-    "cadence::quantize_per_tensor.out",
-    "cadence::quantized_conv2d_nhwc.per_tensor_out",
-    "cadence::quantized_fully_connected.per_tensor_out",
-    "cadence::quantized_relu.per_tensor_out"
+    "aten::copy_"
   ],
   "notes": "Research/synthetic-data checkpoint; see the training bundle README for metrics and limitations. Runtime reading uses the sidecar only as provenance; the C frontend constants are regenerated alongside.",
   "parity_vs_fp32": {
     "clips": 24,
     "fp32_frames_over_0.95": 68,
     "frames": 2400,
-    "int8_frames_over_0.95": 67,
-    "wake_posterior_max_abs_diff": 0.12128889560699463,
-    "wake_posterior_mean_abs_diff": 0.005512523464858532
+    "int8_frames_over_0.95": 66,
+    "wake_posterior_max_abs_diff": 0.11806535720825195,
+    "wake_posterior_mean_abs_diff": 0.004937977064400911
   },
-  "pte_sha256": "426fbe82c31b7e6d9bc6e4cff6080f3fe1126037d0ddda537bbb7eafb9a8d8e1",
-  "pte_size": 79680,
-  "quantization": "cadence-int8-ptq",
+  "pte_sha256": "a752797a1a0b0e4cbc62160fdbf11d9209f00e2672015a6bb7d222114b1f6c34",
+  "pte_size": 77548,
+  "quantization": "espnn-int8-ptq",
   "receptive_field_frames": 30,
   "schema_version": 1,
   "source": "manifold://executorch/tree/jrstevens/hey-muse",

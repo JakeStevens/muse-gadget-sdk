@@ -22,6 +22,7 @@ import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from collections import deque
@@ -313,6 +314,25 @@ class WakeWordFirmwareContract(unittest.TestCase):
     same option, the tap inside both read loops, and the opt-in
     defaulting off. Behaviour is the other classes' job."""
 
+    def test_runner_reload_runs_on_the_wake_task_only(self):
+        # ww_runner_reset reloads the ET method (parse, memory-plan,
+        # delegate init), which needs more stack than the tasks that
+        # call the glue setters have: it smashed the 6 KB voice task
+        # at the end of every PTT turn. The setters must only ask
+        # for it; the wake task owns the runner and performs it.
+        glue = (ROOT / 'components/muse/muse_wakeword_glue.c').read_text()
+        setters = [
+            ('void muse_wakeword_set_ptt_turn', 'void muse_wakeword_on_audio'),
+            ('void muse_wakeword_set_playback', 'void muse_wakeword_set_enabled'),
+            ('void muse_wakeword_set_enabled', 'void muse_wakeword_bench_trigger'),
+        ]
+        for start, end in setters:
+            body = between(glue, start, end)
+            self.assertNotIn('ww_runner_reset', body)
+            self.assertIn('s_reset_requested', body)
+        task = between(glue, 'static void wake_task', 'esp_err_t muse_wakeword_init')
+        self.assertIn('ww_runner_reset', task)
+
     def test_executorch_runner_is_the_default_production_runner(self):
         kconfig = (WW / 'Kconfig').read_text()
         cmake = (WW / 'CMakeLists.txt').read_text()
@@ -349,6 +369,44 @@ class WakeWordFirmwareContract(unittest.TestCase):
         self.assertEqual(
             sidecar['component_op_set_sha256'], profile['op_set_sha256']
         )
+
+    def test_embedded_model_is_16_byte_aligned(self):
+        # The ESP-NN delegate needs the model's constant region
+        # 16-byte aligned; the XTS3 blob lays constants at a
+        # 16-multiple offset within the .pte, so the generated embed
+        # must guarantee a 16-aligned base. ET itself needs only 8,
+        # and an 8-but-not-16 base silently costs the whole blob in
+        # PSRAM (the runtime's "copied to RAM" fallback), as seen on
+        # the Watcher when the linker placed the array at ...b28.
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / 'tiny.pte'
+            fixture.write_bytes(bytes(range(64)))
+            ran = subprocess.run(
+                [sys.executable, str(WW / 'tools/embed_pte.py'),
+                 str(fixture), tmp, 'tiny_pte'],
+                capture_output=True, text=True)
+            self.assertEqual(ran.returncode, 0, ran.stderr)
+            gen_c = Path(tmp) / 'tiny_pte.c'
+            self.assertIn('aligned(16)', gen_c.read_text())
+            main_c = Path(tmp) / 'check_align.c'
+            main_c.write_text(
+                '#include <stdint.h>\n'
+                '#include <stdio.h>\n'
+                'extern const uint8_t tiny_pte_start[];\n'
+                'int main(void) {\n'
+                '    printf("%d\\n", (int)((uintptr_t)tiny_pte_start % 16));\n'
+                '    return 0;\n'
+                '}\n')
+            binary = Path(tmp) / 'check_align'
+            cc = shlex.split(os.environ.get('CC', 'cc'))
+            result = subprocess.run(
+                [*cc, '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+                 str(main_c), str(gen_c), '-o', str(binary)],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0,
+                             result.stdout + result.stderr)
+            ran = subprocess.run([str(binary)], capture_output=True, text=True)
+            self.assertEqual(ran.stdout.strip(), '0')
 
     def test_commands_advertised_and_dispatched_with_the_feature(self):
         noise = (ROOT / 'main/noise_control.cpp').read_text()

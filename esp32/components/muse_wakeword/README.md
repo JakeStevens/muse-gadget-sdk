@@ -35,11 +35,12 @@ runner contract (`include/ww_runner.h`), picked by
   (`ww_detector.c`) driving the embedded `models/hey_muse.pte`
   through the generated ExecuTorch component. Endpointing after a
   wake is energy-based; there is no VAD model. The shipped `.pte` is
-  the int8 export (Cadence-backend PTQ) and needs the component's
-  `wakeword_int8` op profile (`CONFIG_ET_OP_PROFILE_WAKEWORD_INT8=y`);
-  on ESP32-S3 it measures ~12–16 ms per 20 ms frame (frontend
-  included ~18 ms), i.e. real-time with thin headroom. (A
-  portable-fp32 variant measured ~69 ms/frame and was removed.)
+  the int8 export (ESP-NN PTQ, fully delegated) and needs the
+  component's `wakeword_espnn` op profile
+  (`CONFIG_ET_OP_PROFILE_WAKEWORD_ESPNN=y`); on-device frame time is
+  unmeasured — the previous Cadence-backend export measured ~12–16 ms
+  per 20 ms frame (frontend included ~18 ms). (A portable-fp32 variant
+  measured ~69 ms/frame and was removed.)
 - `ww_runner_bench.c` — on-device triggers for bring-up: the serial
   bench keys below, or a loud-then-quiet energy burst (a clap). No
   speech detection of any kind. No board overlay selects it.
