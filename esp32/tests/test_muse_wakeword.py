@@ -14,7 +14,7 @@
 
 """The wake word session core (esp32-design.md §4/§5/§11.1): state machine,
 timers, PTT/playback interleavings, audio rings, and the energy fallback,
-driven through the scripted fake runner (§3.2) and checked against a Python
+driven through scripted runner events and checked against a Python
 model written from the design rules, not from the C."""
 
 import hashlib
@@ -123,7 +123,7 @@ class WakeWordCore(unittest.TestCase):
              '-include', str(ROOT / 'tests/host_compat.h'),
              '-I', str(WW / 'include'), '-I', str(ROOT / 'tests'),
              str(ROOT / 'tests/muse_wakeword_harness.c'),
-             str(WW / 'muse_wakeword_core.c'), str(ROOT / 'tests/ww_runner_fake.c'),
+             str(WW / 'muse_wakeword_core.c'),
              '-o', str(cls.binary)],
             capture_output=True, text=True)
         if result.returncode:
@@ -320,7 +320,6 @@ class WakeWordFirmwareContract(unittest.TestCase):
         self.assertIn('select ET_ENABLE', kconfig)
         self.assertIn('ww_runner_et.cpp', cmake)
         self.assertIn('models/hey_muse.pte', cmake)
-        self.assertFalse((WW / 'ww_runner_fake.c').exists())
         self.assertTrue((WW / 'models/hey_muse.pte').is_file())
 
     def test_model_ops_match_the_sidecars_component_profile(self):

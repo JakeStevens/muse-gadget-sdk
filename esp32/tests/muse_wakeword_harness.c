@@ -20,9 +20,9 @@
  *   core <start_chunks> <end_silence_chunks> <max_chunks> <energy 0|1>
  *     stdin: one tick per line: <ev><voiced><ptt_down><ptt_up><playback><enabled>
  *       ev: '.' none, 'W' wake, 's' speech start, 'e' speech end; flags 0/1.
- *     stdout: "<state> <actions>" per tick, then a stats line. Events go
- *     through the scripted fake runner (§3.2); a voiced tick feeds a loud
- *     chunk, otherwise silence, and the energy helper judges it.
+ *     stdout: "<state> <actions>" per tick, then a stats line. The ev
+ *     column scripts the runner events directly; a voiced tick feeds a
+ *     loud chunk, otherwise silence, and the energy helper judges it.
  *
  *   ring <cap_frames> <chunk_frames> <pushes> <pops>
  *     Pushes that many chunks of a running frame counter, pops, prints the
@@ -37,8 +37,6 @@
 #include <string.h>
 
 #include "muse_wakeword.h"
-#include "ww_runner.h"
-#include "ww_runner_fake.h"
 
 #define CHUNK 320
 
@@ -56,11 +54,7 @@ static int core_main(int argc, char **argv)
     muse_wakeword_core_t core;
     muse_wakeword_core_init(&core, &cfg);
 
-    ww_runner_t *runner = ww_runner_create(NULL);
-    if (!runner) {
-        return 3;
-    }
-    /* Read all ticks first: the fake runner's script is their ev column. */
+    /* Read all ticks first: their ev column is the event script. */
     char line[64];
     size_t cap = 1024, n = 0;
     char(*ticks)[8] = malloc(cap * sizeof(*ticks));
@@ -82,8 +76,6 @@ static int core_main(int argc, char **argv)
                                      : WW_EVENT_NONE;
         n++;
     }
-    ww_runner_fake_set_script(runner, script, n);
-
     int16_t pcm[CHUNK];
     for (size_t i = 0; i < n; i++) {
         bool voiced_flag = ticks[i][1] == '1';
@@ -92,22 +84,22 @@ static int core_main(int argc, char **argv)
             pcm[j] = amp;
         }
         muse_wakeword_input_t in = {
+            /* Scripted events are gated by the listening opt-in, as a
+             * runner's feed() results are; playback suppression stays
+             * with the core, which is what these tests exercise. */
+            .event = ticks[i][5] == '1' ? script[i] : WW_EVENT_NONE,
             .voiced = muse_wakeword_energy_voiced(pcm, CHUNK, MUSE_WAKEWORD_ENERGY_RMS_DEFAULT),
             .ptt_down = ticks[i][2] == '1',
             .ptt_up = ticks[i][3] == '1',
             .playback = ticks[i][4] == '1',
             .enabled = ticks[i][5] == '1',
         };
-        ww_runner_set_listening(runner, in.enabled);
-        ww_runner_set_suppressed(runner, in.playback);
-        in.event = ww_runner_feed(runner, pcm, CHUNK);
         uint32_t actions = muse_wakeword_core_tick(&core, &in);
         printf("%d %u\n", (int)muse_wakeword_core_state(&core), (unsigned)actions);
     }
     muse_wakeword_stats_t st = muse_wakeword_core_stats(&core);
     printf("stats %u %u %u %u %u\n", (unsigned)st.wakes, (unsigned)st.cancels, (unsigned)st.submits,
            (unsigned)st.conversions, (unsigned)st.suppressed_wakes);
-    ww_runner_destroy(runner);
     free(ticks);
     free(script);
     return 0;

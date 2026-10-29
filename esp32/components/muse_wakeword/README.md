@@ -44,8 +44,8 @@ runner contract (`include/ww_runner.h`), picked by
   bench keys below, or a loud-then-quiet energy burst (a clap). No
   speech detection of any kind. No board overlay selects it.
 
-The scripted fake now lives only in `tests/ww_runner_fake.c`, as a
-host-test double; it is not a firmware choice. The boot log and every
+There is no fake runner: host tests script `ww_event_t` sequences
+directly in `tests/muse_wakeword_harness.c`. The boot log and every
 command reply name the linked runner, so a bench build cannot be
 mistaken for detection.
 

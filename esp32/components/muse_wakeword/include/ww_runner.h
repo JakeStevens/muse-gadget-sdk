@@ -29,9 +29,9 @@ extern "C" {
  * This header carries no ESP-IDF types so the host simulator can link
  * the same code. Implementations: ww_runner_et.cpp (production:
  * LFBE + detector + models/hey_muse.pte through the generated
- * ExecuTorch runtime component), ww_runner_bench.c (bring-up
- * triggers), and tests/ww_runner_fake.c (scripted host-test double,
- * never linked into firmware).
+ * ExecuTorch runtime component) and ww_runner_bench.c (bring-up
+ * triggers). Host tests script ww_event_t sequences directly in
+ * tests/muse_wakeword_harness.c; there is no fake runner.
  *
  * Guarantees the integration relies on:
  * - feed() accepts arbitrary frame counts (the firmware's 320-sample
