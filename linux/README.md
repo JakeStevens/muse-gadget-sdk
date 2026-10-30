@@ -206,6 +206,22 @@ speech for at most 5.2 seconds, then explicitly ends the call. Without that
 server support, use explicit hang-up or the client idle timer. The SDK adds no
 server events or permissions itself.
 
+### Optional Hey Muse wake word
+
+Off by default. With `--wake-word`, audio stays on the device until a local
+"Hey Muse" detection starts the voice call; detection pauses during the call, and
+live mode resumes listening after it. Set up once with the trusted ExecuTorch and
+Torch CPU wheels ([`gadget-linux-wakeword`](../skills/gadget-linux-wakeword/SKILL.md)):
+
+```sh
+bash linux/wakeword/setup.sh --wheel /path/executorch.whl --torch-wheel /path/torch.whl --python python3.12
+MUSE_WAKEWORD_LIBRARY="$PWD/linux/wakeword/build/libmuse_wakeword_signal.so" \
+  linux/.venv-wakeword/bin/musegadget voice-call --vm-id YOUR_VM_ID --live --wake-word
+```
+
+`--wake-sensitivity`, `--wake-model` and `--wake-timeout` tune it. The model is a
+research checkpoint with frequent false triggers, and each one uploads nearby audio.
+
 ### Lifecycle diagnostics
 
 Operation-level server errors after readiness are advisory; they increment

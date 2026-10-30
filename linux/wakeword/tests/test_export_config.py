@@ -1,0 +1,67 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# Licensed under the Apache License, Version 2.0.
+
+"""Tests for exporter config validation; no export/build performed here."""
+
+from __future__ import annotations
+
+import copy
+import importlib.util
+import os
+import unittest
+from pathlib import Path
+
+ROOT = Path(os.environ.get("MUSE_WAKEWORD_SOURCE", Path(__file__).resolve().parents[1]))
+spec = importlib.util.spec_from_file_location(
+    "hey_muse_export", ROOT / "tools/export_hey_muse.py"
+)
+exporter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(exporter)
+
+
+class ExportConfigTests(unittest.TestCase):
+    def setUp(self):
+        import re
+
+        header = ROOT / "ww_frontend_config.h"
+        self.header = header
+        self.config = dict(exporter.EXPECTED_FRONTEND)
+        text = header.read_text()
+        for key, symbol in (
+            ("norm_mean", "kWwFrontendNormMean"),
+            ("norm_std", "kWwFrontendNormStd"),
+        ):
+            match = re.search(rf"{symbol}\[40\]\s*=\s*\{{([^}}]+)\}}", text)
+            self.config[key] = [
+                float(value.strip().rstrip("f"))
+                for value in match.group(1).split(",")
+                if value.strip()
+            ]
+
+    def test_frozen_frontend_matches(self):
+        exporter.validate_frontend(self.config, self.header)
+
+    def test_reject_wrong_sample_rate(self):
+        self.config["sample_rate"] = 24000
+        with self.assertRaisesRegex(ValueError, "sample_rate"):
+            exporter.validate_frontend(self.config, self.header)
+
+    def test_reject_changed_normalization(self):
+        changed = copy.deepcopy(self.config)
+        changed["norm_mean"][0] += 0.1
+        with self.assertRaisesRegex(ValueError, "norm_mean"):
+            exporter.validate_frontend(changed, self.header)
+
+    def test_reject_nonfinite_normalization(self):
+        self.config["norm_std"][0] = float("nan")
+        with self.assertRaises(ValueError):
+            exporter.validate_frontend(self.config, self.header)
+
+    def test_reject_truncated_normalization(self):
+        self.config["norm_std"].pop()
+        with self.assertRaises(ValueError):
+            exporter.validate_frontend(self.config, self.header)
+
+
+if __name__ == "__main__":
+    unittest.main()
