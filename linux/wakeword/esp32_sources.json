@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "source_commit": "0ae58f014d75737e3fc6506271beca108a7b567a",
+  "source_component": "esp32/components/muse_wakeword",
+  "files": {
+    "ww_frontend.c": "2766659153884c719505747b6c87f0de89453e78da81ecaa3f2908f98089fc2e",
+    "ww_frontend.h": "2302a79506a732160ada2d34f3c10dbb45d7132c434b3d2a0808c98a911b8baf",
+    "ww_frontend_config.h": "0a1de1be43992a9d475f2a50efc0648d53fbde1b968b8be58e3733b51c158440",
+    "ww_detector.c": "8a386c43e2681283933b7bf4652ecdaba8d47b74b8023221619d2c890163de35",
+    "ww_detector.h": "c994f5fe16a03b896de41d40ce4c0e19e7f758b8487749bda992ae99046ca891",
+    "ww_runner.h": "7d11f579af848ac40dd3f13107857326ebc0a6a9d898af2154068aadca906280"
+  }
+}
