@@ -22,6 +22,7 @@
 
 #include "camera_sscma.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +57,11 @@ static camera_sscma_config_t s_cfg;
 static spi_device_handle_t s_dev;
 static uint8_t *s_tx;            /* one packet, DMA-capable, while powered */
 static uint8_t *s_rx;            /* one read, DMA-capable, while powered */
+static bool s_powered;           /* rail on, booted, buffers held */
+static bool s_held;              /* held across captures: power_down() keeps power */
+#if CONFIG_PM_ENABLE
+static bool s_pm_held;
+#endif
 static sscma_rx_t s_replies = { .max = RX_MAX };
 
 static void power_down(void);
@@ -198,6 +204,33 @@ static esp_err_t sscma_init(void)
     return s_cfg.reset ? s_cfg.reset(true) : ESP_OK;
 }
 
+/* The classification results in an INVOKE event, best first:
+ * data.classes is [[score, target], ...] with score 0-100. */
+static void take_classes(const cJSON *event, camera_frame_t *out)
+{
+    out->n_classes = 0;
+    const cJSON *data = cJSON_GetObjectItem(event, "data");
+    const cJSON *classes = cJSON_GetObjectItem(data, "classes");
+    if (!cJSON_IsArray(classes)) {
+        return;
+    }
+    int n = cJSON_GetArraySize(classes);
+    if (n > CAMERA_MAX_CLASSES) {
+        n = CAMERA_MAX_CLASSES;
+    }
+    for (int i = 0; i < n; i++) {
+        const cJSON *pair = cJSON_GetArrayItem(classes, i);
+        const cJSON *score = cJSON_GetArrayItem(pair, 0);
+        const cJSON *target = cJSON_GetArrayItem(pair, 1);
+        if (!cJSON_IsNumber(score) || !cJSON_IsNumber(target)) {
+            continue;
+        }
+        out->class_score[out->n_classes] = score->valueint;
+        out->class_target[out->n_classes] = target->valueint;
+        out->n_classes++;
+    }
+}
+
 /* The image in a SAMPLE event, decoded into `out`. */
 static esp_err_t take_image(const cJSON *event, camera_frame_t *out)
 {
@@ -224,9 +257,16 @@ static esp_err_t take_image(const cJSON *event, camera_frame_t *out)
 /* Powers the chip, waits for it to boot and sets `resolution`. On failure it's off again. */
 static esp_err_t power_up(int resolution)
 {
+    /* Already up (held): stay warm, don't cold-boot again. */
+    if (s_powered) {
+        return ESP_OK;
+    }
     int64_t t0 = esp_timer_get_time();
 #if CONFIG_PM_ENABLE
-    esp_pm_lock_acquire(s_awake);
+    if (!s_pm_held) {
+        esp_pm_lock_acquire(s_awake);
+        s_pm_held = true;
+    }
 #endif
     /* Internal DMA RAM is scarce, so these are only held while it's on. */
     s_tx = heap_caps_malloc(SSCMA_PACKET, MALLOC_CAP_DMA);
@@ -249,6 +289,7 @@ static esp_err_t power_up(int resolution)
         } while (err == ESP_ERR_TIMEOUT && esp_timer_get_time() < booted_by);
     }
     if (err == ESP_OK) {
+        s_powered = true;
         ESP_LOGI(TAG, "camera up in %lld ms", (esp_timer_get_time() - t0) / 1000);
     } else {
         ESP_LOGW(TAG, "camera didn't start: %s", esp_err_to_name(err));
@@ -257,7 +298,7 @@ static esp_err_t power_up(int resolution)
     return err;
 }
 
-static void power_down(void)
+static void power_off(void)
 {
     if (s_cfg.reset) {
         s_cfg.reset(true);
@@ -267,9 +308,35 @@ static void power_down(void)
     free(s_tx);
     free(s_rx);
     s_tx = s_rx = NULL;
+    s_powered = false;
 #if CONFIG_PM_ENABLE
-    esp_pm_lock_release(s_awake);
+    if (s_pm_held) {
+        esp_pm_lock_release(s_awake);
+        s_pm_held = false;
+    }
 #endif
+}
+
+static void power_down(void)
+{
+    /* Held across captures: keep the rail, buffers, and reply queue. */
+    if (s_held && s_powered) {
+        return;
+    }
+    power_off();
+}
+
+static esp_err_t sscma_power_hold(bool on)
+{
+    if (on) {
+        s_held = true;
+        return power_up(s_cfg.stream_resolution);
+    }
+    s_held = false;
+    if (s_powered) {
+        power_off();
+    }
+    return ESP_OK;
 }
 
 static esp_err_t sscma_capture(camera_frame_t *out)
@@ -291,6 +358,47 @@ static esp_err_t sscma_capture(camera_frame_t *out)
                  (esp_timer_get_time() - t0) / 1000);
     } else {
         ESP_LOGW(TAG, "capture failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+/*
+ * One classified frame: like sscma_capture, but AT+INVOKE=1 so the
+ * Himax runs inference and the INVOKE event carries data.classes
+ * alongside data.image. Uses the stream (416x416) resolution to
+ * keep the result well under the 256 KiB control-message cap.
+ */
+static esp_err_t sscma_classify(camera_frame_t *out)
+{
+    int64_t t0 = esp_timer_get_time();
+    if (s_powered) {
+        /* Warm: drop any stale reply queued by an earlier cycle so a
+         * late event can't be mistaken for this cycle's answer. */
+        sscma_rx_free(&s_replies);
+    }
+    esp_err_t err = power_up(s_cfg.stream_resolution);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = request("AT+INVOKE=1\r\n", "INVOKE", REPLY_MS);
+    if (err == ESP_OK) {
+        cJSON *event = wait_for(SSCMA_TYPE_EVENT, "INVOKE", SAMPLE_MS);
+        if (event) {
+            err = take_image(event, out);
+            if (err == ESP_OK) {
+                take_classes(event, out);
+            }
+            cJSON_Delete(event);
+        } else {
+            err = ESP_ERR_TIMEOUT;
+        }
+    }
+    power_down();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "%dx%d JPEG, %u bytes, %d classes in %lld ms", out->width, out->height,
+                 (unsigned)out->len, out->n_classes, (esp_timer_get_time() - t0) / 1000);
+    } else {
+        ESP_LOGW(TAG, "classify failed: %s", esp_err_to_name(err));
     }
     return err;
 }
@@ -386,7 +494,9 @@ const camera_driver_t *camera_sscma(const camera_sscma_config_t *config)
         .max_height = RES_H[s_cfg.resolution],
         .init = sscma_init,
         .capture = sscma_capture,
+        .classify = sscma_classify,
         .release = sscma_release,
+        .power_hold = sscma_power_hold,
         .stream_start = sscma_stream_start,
         .stream_stop = sscma_stream_stop,
     };

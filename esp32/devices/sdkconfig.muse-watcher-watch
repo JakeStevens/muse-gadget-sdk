@@ -1,0 +1,6 @@
+# Watcher watch overlay: enable the SenseCAP Watcher camera capture
+# command (and the watcher.coffee_mug + 2-second watch loop, which
+# are compiled under this guard). Appended after
+# devices/sdkconfig.muse-sensecap-watcher in the defaults chain by the
+# workspace build script; last fragment wins.
+CONFIG_MUSE_WATCHER_CAMERA=y

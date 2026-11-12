@@ -86,6 +86,7 @@
 #endif
 #if CONFIG_MUSE_WATCHER_CAMERA
 #include "boards/watcher_camera.h"
+#include "watcher_watch.h"
 #define camera_capture_base64 watcher_camera_capture
 #elif CONFIG_MUSE_P4_CSI_CAMERA
 #include "boards/p4_csi_camera.h"
@@ -1988,6 +1989,32 @@ static cJSON *on_ws_command(
         led_status_show_animation();
         cJSON *result = cJSON_CreateObject();
         cJSON_AddBoolToObject(result, "ok", true);
+        return result;
+    }
+#endif
+#if CONFIG_MUSE_WATCHER_CAMERA
+    if (strcmp(command, "watcher.coffee_mug") == 0) {
+        cJSON *item = params ? cJSON_GetObjectItem(params, "enabled") : NULL;
+        bool enabled;
+        if (cJSON_IsBool(item)) {
+            enabled = cJSON_IsTrue(item);
+        } else if (cJSON_IsString(item) && item->valuestring &&
+                   (strcmp(item->valuestring, "on") == 0 ||
+                    strcmp(item->valuestring, "true") == 0)) {
+            enabled = true;
+        } else if (cJSON_IsString(item) && item->valuestring &&
+                   (strcmp(item->valuestring, "off") == 0 ||
+                    strcmp(item->valuestring, "false") == 0)) {
+            enabled = false;
+        } else {
+            return command_error("missing_param", "enabled is required (boolean, or on/off)");
+        }
+        if (!watcher_mug_set_armed(enabled)) {
+            return command_error("internal_error", "failed to arm coffee mug watching");
+        }
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddBoolToObject(result, "ok", true);
+        cJSON_AddBoolToObject(result, "armed", enabled);
         return result;
     }
 #endif

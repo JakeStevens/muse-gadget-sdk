@@ -186,6 +186,59 @@ bool watcher_camera_capture(char **jpeg_base64, const char **error)
     return ok;
 }
 
+bool watcher_camera_classify(camera_frame_t *out, const char **error)
+{
+    if (!out || !error) {
+        return false;
+    }
+    *error = NULL;
+    if (watcher_camera_prepare() != ESP_OK) {
+        *error = "camera memory allocation failed";
+        return false;
+    }
+    if (s_preview_active) {
+        /* The preview stream owns the camera and its frames carry no classes. */
+        *error = "camera busy";
+        return false;
+    }
+    if (atomic_exchange(&s_busy, true)) {
+        *error = "camera busy";
+        return false;
+    }
+    esp_err_t err = camera_classify(out);
+    if (err != ESP_OK) {
+        atomic_store(&s_busy, false);
+        *error = err == ESP_ERR_TIMEOUT ? "Himax camera did not respond"
+                 : err == ESP_ERR_NO_MEM ? "camera memory allocation failed"
+                 : err == ESP_ERR_NOT_SUPPORTED ? "camera unavailable"
+                 : err == ESP_ERR_INVALID_STATE ? "camera busy"
+                                                 : "camera capture failed";
+        return false;
+    }
+    /* s_busy stays set until watcher_camera_release(): the caller owns
+     * the driver frame until then. */
+    return true;
+}
+
+void watcher_camera_release(camera_frame_t *frame)
+{
+    camera_release(frame);
+    atomic_store(&s_busy, false);
+}
+
+esp_err_t watcher_camera_set_power_hold(bool on)
+{
+    /* Serialize against captures and the preview toggle, so power
+     * can never be cut under a frame in flight. INVALID_STATE means
+     * busy: the caller retries later. */
+    if (atomic_exchange(&s_busy, true)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t err = camera_power_hold(on);
+    atomic_store(&s_busy, false);
+    return err;
+}
+
 static void preview_toggle_task(void *arg)
 {
     (void)arg;

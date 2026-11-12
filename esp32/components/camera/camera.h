@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -33,11 +34,19 @@ extern "C" {
  * viewfinder with camera_stream_start() and camera_stream_stop().
  */
 
+/* Classification results, best first, as reported by the Himax
+ * WiseEye2 on an INVOKE event: [score, target] pairs with score 0-100.
+ * Empty (n_classes == 0) for SAMPLE captures, which carry no classes. */
+#define CAMERA_MAX_CLASSES 5
+
 typedef struct {
     const uint8_t *jpeg;
     size_t len;
     int width, height;
     void *priv;               /* the backend's, for release */
+    int n_classes;
+    int class_target[CAMERA_MAX_CLASSES];
+    int class_score[CAMERA_MAX_CLASSES];
 } camera_frame_t;
 
 /* A streamed frame, on the backend's task; it's freed when this returns. */
@@ -50,8 +59,16 @@ typedef struct {
     esp_err_t (*init)(void);
     /* One JPEG. Powers the camera only as long as it needs to. */
     esp_err_t (*capture)(camera_frame_t *out);
+    /* One JPEG plus classification results (n_classes filled). Falls
+     * back to capture() with n_classes == 0 when NULL. Powers the
+     * camera only as long as it needs to. */
+    esp_err_t (*classify)(camera_frame_t *out);
     /* Frees what capture() gave out; NULL if nothing needs freeing. */
     void (*release)(camera_frame_t *frame);
+    /* Holds the camera powered across captures: power_hold(true) boots
+     * it once; later captures run warm. power_hold(false) powers it
+     * down. NULL when the backend can't hold power. */
+    esp_err_t (*power_hold)(bool on);
     /* Frames until stream_stop(), smaller ones to keep up; the camera stays
      * powered meanwhile. Both NULL if it can't stream. */
     esp_err_t (*stream_start)(camera_frame_cb_t on_frame, void *ctx);
@@ -71,6 +88,21 @@ const camera_driver_t *camera_get(void);
  */
 esp_err_t camera_capture(camera_frame_t *out);
 void camera_release(camera_frame_t *frame);
+
+/*
+ * Takes one picture with classification results (n_classes filled when
+ * the backend supports it). Same one-frame-at-a-time rule as
+ * camera_capture(); ESP_ERR_NOT_SUPPORTED if there's no camera.
+ */
+esp_err_t camera_classify(camera_frame_t *out);
+
+/*
+ * Holds the camera powered across captures (watch loop armed) or
+ * powers it down (disarmed). ESP_ERR_NOT_SUPPORTED when the backend
+ * has no power_hold op. Call only when no frame is held and no
+ * stream is running.
+ */
+esp_err_t camera_power_hold(bool on);
 
 /*
  * Calls on_frame with each frame until camera_stream_stop(), which returns

@@ -29,7 +29,8 @@ extern "C" {
  * A camera that speaks Seeed's SSCMA over SPI: the SenseCAP Watcher's Himax
  * WiseEye2, or a Grove Vision AI V2. The chip is powered only for a capture
  * or a stream: power, reset, wait for it to boot, pick the resolution, sample,
- * power off. Between them nothing runs: no task, no polling. The board
+ * power off, unless power is held: then it stays booted across captures.
+ * Between them nothing runs: no task, no polling. The board
  * supplies the lines, wherever they are (GPIOs or an I/O expander).
  */
 

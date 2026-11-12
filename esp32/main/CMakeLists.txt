@@ -42,6 +42,7 @@ set(GADGET_SRCS
     "net_discovery.c"
     "noise_control.cpp"
     "noise_tunnel.cpp"
+    "watcher_watch.c"
     "link_pairing.c"
     "pairing_signer_policy.c"
     "pairing_transcript.c"

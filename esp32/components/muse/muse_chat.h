@@ -132,6 +132,18 @@ size_t muse_hatch_mp3_selftest(int16_t **pcm);
  */
 size_t muse_hatch_turn_audio_wait(const int16_t *pcm, size_t frames, int wait_ms);
 
+/* ---- Watcher detection pushes (SenseCAP Watcher, CONFIG_MUSE_HATCH only) ---- */
+
+/*
+ * Posts one detection as a typed turn (image + text, unspoken reply):
+ * only while no turn is in progress and the VM is reachable, otherwise
+ * returns false with nothing posted. `score` is the 0-100 result score.
+ * Callable from any task; the watch loop calls it at most once per
+ * 2-second cycle, only for the armed category above 75%.
+ */
+bool muse_chat_send_detection(const uint8_t *jpeg, size_t jpeg_len,
+                              const char *category, int score);
+
 /* ---- Typed turns from the serial console (CONFIG_MUSE_HATCH only) ---- */
 
 /*

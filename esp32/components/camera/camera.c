@@ -68,6 +68,27 @@ esp_err_t camera_capture(camera_frame_t *out)
     return err;
 }
 
+esp_err_t camera_classify(camera_frame_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    const camera_driver_t *d = s_driver;
+    if (!d) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (atomic_flag_test_and_set(&s_busy)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t err = start(d);
+    if (err == ESP_OK) {
+        err = d->classify ? d->classify(out) : d->capture(out);
+    }
+    if (err != ESP_OK) {
+        memset(out, 0, sizeof(*out));
+        atomic_flag_clear(&s_busy);
+    }
+    return err;
+}
+
 void camera_release(camera_frame_t *frame)
 {
     if (!frame->jpeg) {
@@ -78,6 +99,21 @@ void camera_release(camera_frame_t *frame)
     }
     memset(frame, 0, sizeof(*frame));
     atomic_flag_clear(&s_busy);
+}
+
+esp_err_t camera_power_hold(bool on)
+{
+    const camera_driver_t *d = s_driver;
+    if (!d || !d->power_hold) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    /* Backend setup, as capture/classify do; callers serialize this
+     * against captures and streams (see camera_power_hold's comment). */
+    esp_err_t err = start(d);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return d->power_hold(on);
 }
 
 esp_err_t camera_stream_start(camera_frame_cb_t on_frame, void *ctx)

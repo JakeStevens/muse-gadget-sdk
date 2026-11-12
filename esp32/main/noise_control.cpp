@@ -1579,6 +1579,25 @@ static char *build_register_json(void) {
                 nullptr, nullptr);
     cJSON_AddNumberToObject(
         cJSON_GetObjectItem(commands, "camera.capture"), "timeout_ms", 30000);
+#if CONFIG_MUSE_WATCHER_CAMERA
+    {
+        cJSON *required = cJSON_CreateObject();
+        cJSON *enabled_param = cJSON_CreateObject();
+        cJSON_AddStringToObject(enabled_param, "type", "boolean");
+        cJSON_AddStringToObject(enabled_param, "description",
+                                "True to arm coffee mug watching, false to disarm.");
+        cJSON_AddItemToObject(required, "enabled", enabled_param);
+        add_command(commands, "watcher.coffee_mug",
+                    "Arm or disarm coffee mug watching. Once per 2 seconds it runs "
+                    "ImageNet classification on a frame; when a coffee mug "
+                    "(class 504) is the top result above 75% confidence, "
+                    "it pushes the result plus the image to Muse. No other "
+                    "class triggers a push.",
+                    required, nullptr);
+        cJSON_AddNumberToObject(
+            cJSON_GetObjectItem(commands, "watcher.coffee_mug"), "timeout_ms", 10000);
+    }
+#endif /* CONFIG_MUSE_WATCHER_CAMERA */
 #endif
 
     if (ota_is_enabled()) {

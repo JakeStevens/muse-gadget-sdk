@@ -204,7 +204,8 @@ set(muse_priv_requires
     # The Sticky's microSD (CONFIG_MUSE_STICKY_SD). Requirements are resolved
     # before Kconfig values exist, so these can't depend on it; only the code does.
     fatfs esp_driver_sdspi sdmmc)
-list(APPEND muse_priv_requires camera)
+# camera headers are included by boards/watcher_camera.h, which
+# main/ includes, so camera must be a public requirement.
 # The P4 camera's JPEG encoder; Kconfig is not loaded yet when requirements expand.
 if(IDF_TARGET STREQUAL "esp32p4")
     list(APPEND muse_priv_requires esp_driver_jpeg)
@@ -216,7 +217,7 @@ idf_component_register(
     EMBED_FILES ${embed}
     LDFRAGMENTS "linker.lf"   # CONFIG_MUSE_STATIC_BUFFERS_IN_PSRAM
     WHOLE_ARCHIVE   # muse_lv_mem.c provides symbols only LVGL references
-    REQUIRES esp_driver_gpio esp_driver_i2c
+    REQUIRES esp_driver_gpio esp_driver_i2c camera
     PRIV_REQUIRES ${muse_priv_requires}
 )
 

@@ -1246,6 +1246,88 @@ static void send_chat(const char *text, const char *modality, bool spoken)
     s_turn.phase = P_WAIT_REPLY;
 }
 
+/*
+ * Posts a Watcher detection as a typed turn: the text goes first as
+ * its own item (Muse reads only the items of a request that has any),
+ * then the JPEG as a base64 image item, mirroring Linux
+ * LinkSession.send_image(). The caller is the 2-second watch loop; it
+ * only runs while no turn is in progress, and this function refuses
+ * (returns false, nothing posted) if a turn started meanwhile or the
+ * VM can't be reached. The reply is unspoken (typed turn) and goes to
+ * the console. `score` is the 0-100 result score from the Himax.
+ */
+bool muse_chat_send_detection(const uint8_t *jpeg, size_t jpeg_len,
+                              const char *category, int score)
+{
+    if (!jpeg || !jpeg_len || !category || !category[0]) {
+        return false;
+    }
+    /* Refuse rather than steal a voice turn that started meanwhile. */
+    if (s_turn.phase != P_IDLE) {
+        return false;
+    }
+    if (!turn_start(0, true)) {
+        return false;
+    }
+    char text[128];
+    snprintf(text, sizeof(text), "Watcher detected %s with confidence %d%%.",
+             category, score);
+    size_t b64_cap = (jpeg_len + 2) / 3 * 4 + 1;
+    char *b64 = static_cast<char *>(heap_caps_malloc(b64_cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!b64) {
+        turn_fail("OUT OF MEMORY");
+        return false;
+    }
+    size_t b64_len = muse_hatch_base64(jpeg, jpeg_len, b64);
+    b64[b64_len] = '\0';
+
+    cJSON *body = cJSON_CreateObject();
+    cJSON *items = cJSON_CreateArray();
+    cJSON *text_item = cJSON_CreateObject();
+    cJSON_AddStringToObject(text_item, "type", "text");
+    cJSON_AddStringToObject(text_item, "text", text);
+    cJSON_AddItemToArray(items, text_item);
+    cJSON *image_item = cJSON_CreateObject();
+    cJSON_AddStringToObject(image_item, "type", "image");
+    cJSON_AddStringToObject(image_item, "mime_type", "image/jpeg");
+    cJSON_AddStringToObject(image_item, "data_base64", b64);
+    cJSON_AddStringToObject(image_item, "filename", "watcher.jpg");
+    cJSON_AddItemToArray(items, image_item);
+    cJSON_AddStringToObject(body, "message", text);
+    cJSON_AddStringToObject(body, "output_modality", "text");
+    cJSON_AddItemToObject(body, "items", items);
+    char *json = cJSON_PrintUnformatted(body);
+    cJSON_Delete(body);
+    free(b64);
+    if (!json) {
+        turn_fail("OUT OF MEMORY");
+        return false;
+    }
+    size_t len = strlen(json);
+    bool whole = len <= CHAT_PART;
+    s_turn.chat_posted = true;
+    s_turn.chat_id = open_stream(K_CHAT, "POST", "/chat/stream", "application/json", nullptr,
+                                 whole ? json : nullptr, whole);
+    bool ok = s_turn.chat_id != 0;
+    for (size_t off = 0; ok && !whole && off < len; off += CHAT_PART) {
+        size_t n = len - off < CHAT_PART ? len - off : CHAT_PART;
+        ok = send_body(s_turn.chat_id, reinterpret_cast<const uint8_t *>(json) + off, n, off + n == len);
+    }
+    cJSON_free(json);
+    if (!ok) {
+        disconnect("chat/stream failed");
+        turn_fail("CAN'T REACH MUSE");
+        return false;
+    }
+    s_turn.body_sent = len;
+    s_turn.chat_us = s_turn.last_event_us = now_us();
+    s_turn.phase = P_WAIT_REPLY;
+    mark(M_SENT);
+    muse_hatch_console("sent", nullptr, "\"bytes\":%u", (unsigned)len);
+    ESP_LOGI(TAG, "watcher detection posted: %s %d%%, %u bytes", category, score, (unsigned)len);
+    return true;
+}
+
 static void post_chat(const char *text)
 {
     if (s_turn.chat_posted) {
